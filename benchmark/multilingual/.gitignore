@@ -1,0 +1,4 @@
+# Generated test PDFs ship with the code; the arXiv copy is downloaded by fetch_pdfs.py
+pdfs/*
+!pdfs/hi-*.pdf
+!pdfs/mr-*.pdf
