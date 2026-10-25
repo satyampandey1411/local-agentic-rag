@@ -1,0 +1,29 @@
+[
+  {
+    "doc_id": "arxiv-2503.05037",
+    "title": "Collapse of Dense Retrievers: Short, Early, and Literal Biases Outranking Factual Evidence (Fayyaz, Modarressi, Schütze, Peng; ACL 2025)",
+    "url": "https://arxiv.org/pdf/2503.05037v2",
+    "sha256": "e62a61bf3e0bfbfcbd08f9fe09cdb29079f9e87035c32b3ee7eee89df1630fb1",
+    "num_pages": 17,
+    "doc_type": "academic_paper_two_column",
+    "source_license_note": "arXiv preprint (v2, 2 Jun 2025). Copyright remains with the authors; distributed by arXiv under the arXiv non-exclusive distribution license. This benchmark does NOT redistribute the PDF - it is fetched from arXiv at evaluation time."
+  },
+  {
+    "doc_id": "bea-gdp2q25-3rd",
+    "title": "Gross Domestic Product, 2nd Quarter 2025 (Third Estimate), GDP by Industry, Corporate Profits (Revised), and Annual Update - BEA news release BEA 25-40, September 25, 2025",
+    "url": "https://www.bea.gov/sites/default/files/2025-09/gdp2q25-3rd.pdf",
+    "sha256": "ffe784a168b799623274760b4d541d7a370ef2b324270a13ee9e313cb7fb9ffc",
+    "num_pages": 28,
+    "doc_type": "statistical_report_table_heavy",
+    "source_license_note": "U.S. Bureau of Economic Analysis (U.S. Department of Commerce) work product; U.S. federal government works are in the public domain in the United States (17 U.S.C. 105)."
+  },
+  {
+    "doc_id": "nist-ai-600-1",
+    "title": "NIST AI 600-1: Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile (July 2024)",
+    "url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
+    "sha256": "6e73620ab6b64e90ef2c04bf0e0d6246185a2f4b1b13cab0df494496cff89b6a",
+    "num_pages": 64,
+    "doc_type": "technical_standard_structured",
+    "source_license_note": "NIST publication (U.S. Department of Commerce); works of the U.S. federal government are not subject to copyright protection in the United States (17 U.S.C. 105). DOI: 10.6028/NIST.AI.600-1."
+  }
+]
