@@ -1,0 +1,7 @@
+*.aux
+*.log
+*.out
+build.log
+# build outputs: the published copy is Local_Agentic_RAG_Progress_Report.pdf
+main.pdf
+*_overleaf.zip
