@@ -82,7 +82,7 @@
     {\includegraphics[width=\paperwidth]{figures/cover.png}};
   \node[anchor=north west,text=white,font=\fontsize{8}{10}\selectfont\bfseries]
     at ([xshift=17mm,yshift=-11mm]current page.north west)
-    {\MakeUppercase{Hackathon progress report \enspace·\enspace 25 October 2026}};
+    {\MakeUppercase{Hackathon progress report \enspace·\enspace 26 October 2026}};
 \end{tikzpicture}
 
 \vspace*{80mm}
@@ -101,10 +101,10 @@ using open-weight models on a free Google Colab T4 GPU}\par
 \end{tabularx}
 
 \vspace{6pt}
-\kicker{Results at a glance (measured on a fresh Colab T4 runtime)}\par\vspace{3pt}
+\kicker{Results at a glance (project notebook run top to bottom on a T4)}\par\vspace{3pt}
 \begin{tcbraster}[raster columns=4,raster equal height,raster column skip=6pt,raster before skip=0pt,raster after skip=0pt]
-  \metric{73.1\%}{answer accuracy}{61 English questions on 3 PDFs, up from 50.0\% at baseline}
-  \metric{92.3\%}{page recall@5}{evidence page in the top 5, up from 73.1\% for the starting code}
+  \metric{76.9\%}{answer accuracy}{61 English questions on 3 PDFs, up from 50.0\% at baseline}
+  \metric{94.2\%}{page recall@5}{evidence page in the top 5, up from 73.1\% for the starting code}
   \metric{88.9\%}{multilingual accuracy}{20 questions: Hindi, Hinglish, Marathi, English, scanned pages}
   \metric{8.9 GB}{GPU memory in use}{of 15 GB on the T4, with the LLM, embedder and reranker loaded}
 \end{tcbraster}
@@ -133,7 +133,7 @@ every change on a fixed benchmark.
   \item Colab notebook that runs top to bottom on a fresh T4
   \item Chat UI (Gradio) with PDF upload, history and citations
   \item Tables, two-column layouts and scanned pages (OCR)
-  \item 430 offline tests, about 15 seconds, no downloads
+  \item 472 offline tests, about 15 seconds, no downloads
 \end{itemize}
 \columnbreak
 \kicker{Still open}\par\vspace{2pt}
@@ -217,12 +217,12 @@ and the loop never exceeds eight. Structured steps use JSON-schema constrained o
 \toprule
 \color{navy}Decision & \color{navy}\textbf{Why} & \color{navy}\textbf{Measured effect} \\ \midrule
 Hybrid search + cross-encoder reranker & Dense search finds paraphrases, BM25 finds exact labels and numbers, and the reranker reads question and passage together. & Page recall@5 73.1\% $\to$ 96.2\% (English models) \\
-Table rebuilding & Statistical tables are aligned with spaces, so plain text extraction scrambles rows and columns. & Rows read as \texttt{label | 2025 Q2 = 3.8}. Table questions rose from 42\% to 75\%, helped by better retrieval \\
+Table rebuilding & Statistical tables are aligned with spaces, so plain text extraction scrambles rows and columns. & Rows read as \texttt{label | 2025 Q2 = 3.8}. Table questions rose from 42\% to 83\%, helped by better retrieval and table captions \\
 BGE-M3 + multilingual reranker & English-only models miss Hindi and Hinglish wording. & Multilingual set: recall@5 0.94 $\to$ 1.00 and MRR 0.88 $\to$ 0.97, with answer accuracy tied \\
 Adaptive agent, not an always-on loop & Our first always-on loop was \emph{worse} than a single pass (23 vs 27 of 38): sub-queries crowded out the real evidence. & The loop runs only when needed, with fewer false refusals at similar accuracy \\
-Python calculator & The 7B model subtracts and counts wrong even with the right numbers in view. & Arithmetic is exact, but choosing the right table cell is still hard \\
+Python calculator & The 7B model subtracts and counts wrong even with the right numbers in view. & Arithmetic is exact and operands are checked against the cited row and column, but numerical questions are still 2/6 \\
 Tesseract CLI OCR at 300 dpi & The built-in OCR path lost about 30\% of the Hindi words on scanned pages. & Hindi word recall 0.70 $\to$ 0.99 and 1.00 on the two scanned pages \\
-Ollama for the LLM & Prebuilt CUDA binaries. Source-built alternatives failed on Colab's CUDA 13 and Python 3.13. & Installs in about 40 s, and the 7B model needs 5.2 GB \\
+Ollama for the LLM & Prebuilt CUDA binaries. Source-built alternatives failed on Colab's CUDA 13 and Python 3.13. & Installs in about 40 s on Colab, and the 7B model needs 5.2 GB \\
 \bottomrule
 \end{tabularx}}
 
@@ -241,7 +241,7 @@ the watchdog restarted the runner and no question failed. Parsed documents are c
 a U.S.\ BEA GDP release (28 pages, mostly statistical tables) and NIST AI 600-1 (64 pages). The questions cover seven categories,
 including 9 that the documents cannot answer. A correct answer must contain every required fact and must not refuse.
 \textbf{Multilingual set:} 20 questions over a Hindi article, a Marathi article, a scanned (image-only) Hindi document,
-and the English paper asked in Hindi and Hinglish. All results come from a fresh Colab T4 runtime.
+and the English paper asked in Hindi and Hinglish. Final results: the project notebook run top to bottom on one T4 (on Kaggle, as Colab's free GPU quota was used up).
 
 \vspace{2pt}
 \begin{minipage}[t]{0.49\textwidth}
@@ -260,13 +260,13 @@ and the English paper asked in Hindi and Hinglish. All results come from a fresh
     point meta=explicit symbolic, enlarge y limits=0.08,
     axis line style={draw=rule}, major tick length=0pt]
   \addplot[fill=cyan!55,draw=none] coordinates {
-    (73.1,start)[73.1] (73.1,minilm)[73.1] (79.8,bge)[79.8] (82.7,bm25)[82.7]
-    (81.7,hybrid)[81.7] (96.2,rerank)[96.2] (83.7,m3dense)[83.7]};
-  \addplot[fill=amber,draw=none] coordinates {(92.3,m3rerank)[92.3]};
+    (73.1,start)[73.1] (76.0,minilm)[76.0] (80.8,bge)[80.8] (81.7,bm25)[81.7]
+    (81.7,hybrid)[81.7] (96.2,rerank)[96.2] (84.6,m3dense)[84.6]};
+  \addplot[fill=amber,draw=none] coordinates {(94.2,m3rerank)[94.2]};
 \end{axis}
 \end{tikzpicture}\par
 \note{Orange is the default (multilingual). The reranker is the largest single gain.
-The multilingual default is one question below the English-only reranker here and ranks best at top-1 (66.3\%).}
+The multilingual default is one question below the English-only reranker here and ranks best at top-1 (68.3\%).}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.47\textwidth}
 \subsection{Answers: end to end on the T4}
@@ -275,12 +275,12 @@ The multilingual default is one question below the English-only reranker here an
 \begin{tabularx}{\linewidth}{@{}X r r r@{}}
 \toprule
  & \textbf{Baseline} & \textbf{Single pass} & \textbf{Agent} \\ \midrule
-Answer accuracy      & 50.0\% & 69.2\% & \textbf{73.1\%} \\
-Fact recall          & 53.2\% & 73.7\% & 77.2\% \\
+Answer accuracy      & 50.0\% & 71.2\% & \textbf{76.9\%} \\
+Fact recall          & 53.2\% & 74.7\% & 80.1\% \\
 False refusals       & 26.9\% & 3.8\%  & 1.9\% \\
 Unanswerable refused & 9/9    & 9/9    & 9/9 \\
-Citation precision   & 70.6\% & 69.3\% & 73.5\% \\
-Latency, median      & 2.7 s  & 2.8 s  & 6.4 s \\
+Citation precision   & 70.6\% & 73.7\% & 78.4\% \\
+Latency, median      & 2.7 s  & 3.2 s  & 6.6 s \\
 \bottomrule
 \end{tabularx}}
 \note{Same 61 questions and LLM in every column. ``Baseline'' is the starting design (MiniLM search, single pass), measured in an earlier T4 run. ``Single pass'' and ``Agent'' use the multilingual retriever.
@@ -301,7 +301,7 @@ differences between the last two columns are within noise.}
     nodes near coords, nodes near coords style={font=\fontsize{7.4}{9}\selectfont},
     point meta=explicit symbolic, enlarge y limits=0.1,
     axis line style={draw=rule}, major tick length=0pt]
-  \addplot[fill=navy!80,draw=none] coordinates {(100,fact)[100] (100,def)[100] (75,table)[75] (67,comp)[67] (44,multi)[44] (33,num)[33] (100,unans)[100]};
+  \addplot[fill=navy!80,draw=none] coordinates {(100,fact)[100] (100,def)[100] (83,table)[83] (67,comp)[67] (56,multi)[56] (33,num)[33] (100,unans)[100]};
 \end{axis}
 \end{tikzpicture}
 \end{minipage}
@@ -314,33 +314,31 @@ differences between the last two columns are within noise.}
 \begin{tabularx}{\linewidth}{@{}X r r@{}}
 \toprule
 Question slice & \textbf{n} & \textbf{Correct} \\ \midrule
-Hindi questions (8 answerable) & 9 & 8/8 \\
-\quad of which on the scanned document (OCR) & 2 & 2/2 \\
-Hinglish questions & 3 & 2/3 \\
+Hindi questions (8 answerable, 2 scanned) & 9 & 7/8 \\
+Hinglish questions & 3 & 3/3 \\
 Marathi questions (3 answerable) & 4 & 3/3 \\
 English questions about Hindi/Marathi docs & 4 & 3/4 \\
 Unanswerable, correctly refused & 2 & 2/2 \\ \midrule
 \textbf{All answerable} & 18 & \textbf{16/18 (88.9\%)} \\
 \bottomrule
 \end{tabularx}}
-\note{Answers come back in the question's language. The two misses: a Hinglish two-part question that was refused,
-and ``16 jets $\times$ 16 petals'' computed as a sum. The same agent with English-only models also scores 16/18, but finds
-evidence less well (recall@5 0.94 vs 1.00).}
+\note{Answers come back in the question's language. The previous run of the same code scored 17/18, with both scanned-page (OCR)
+questions correct. English-only models also score 16/18 but retrieve worse (recall@5 0.94 vs 1.00).}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.47\textwidth}
-\subsection{Resources on the free T4}
+\subsection{Resources on a single T4}
 \renewcommand{\arraystretch}{1.2}
 {\fontsize{8.4}{10.2}\selectfont
 \begin{tabularx}{\linewidth}{@{}X r@{}}
 \toprule
 GPU memory in use, all three models loaded & 8.9 / 15.0 GB \\
-Ollama install + 4.7 GB model download & 3.1 min \\
-Ingest a 17-page paper (first time, cached after) & 12.5 s \\
-Scanned 2-page Hindi document, with OCR & 41 s \\
-Retrieval ablation, 8 configurations & 4.0 min \\
-English answers, 2 configurations $\times$ 61 & 15.0 min \\
-Multilingual answers, 2 configurations $\times$ 20 & 7.6 min \\
-Offline test suite & 430 tests, $\approx$15 s \\
+Ollama install + 4.7 GB model download & 3.8 min \\
+Ingest a 17-page paper (first time, cached after) & 8.5 s \\
+Scanned 2-page Hindi document, with OCR & 16 s \\
+Retrieval ablation, 7 configurations & 1.9 min \\
+English answers, 2 configurations $\times$ 61 & 14.3 min \\
+Multilingual answers, 2 configurations $\times$ 20 & 7.4 min \\
+Offline test suite & 472 tests, $\approx$15 s \\
 \bottomrule
 \end{tabularx}}
 \end{minipage}
@@ -381,7 +379,7 @@ The quoted sources are the passages the citations point to.}
   \item \done\ Page citations, and refusals when the PDF has no answer
   \item \done\ Hindi, Hinglish, Marathi, cross-language questions
   \item \done\ Colab notebook and chat UI, run on a fresh T4
-  \item \done\ Benchmarks with ablations and 430 tests
+  \item \done\ Benchmarks with ablations and 472 tests
 \end{itemize}
 &
 \begin{itemize}[label={}]
@@ -394,8 +392,8 @@ The quoted sources are the passages the citations point to.}
 \end{tabularx}}
 
 \subsection{Latest improvements: before and after}
-We analysed every failed question from the previous full run, fixed only what the evidence pointed to, added regression tests
-for each fix, and re-ran all benchmarks in a fresh runtime.
+We analysed every failed question, fixed only what the evidence pointed to, added regression tests for each fix, and measured
+every change on the GPU before keeping it.
 \vspace{2pt}
 
 \renewcommand{\arraystretch}{1.22}
@@ -405,13 +403,13 @@ for each fix, and re-ran all benchmarks in a fresh runtime.
 \color{navy}Change & \color{navy}\textbf{Evidence that it was needed} & \color{navy}\textbf{Before $\to$ after} \\ \midrule
 OCR through the Tesseract CLI & One of the two scanned-page questions failed because the OCR text had lost words & Word recall 0.70 $\to$ 0.99 and 1.00. Scanned-page questions 1/2 $\to$ 2/2 \\
 Refusal detection & An unanswerable question got a cited ``the document does not say\ldots'' that was scored as an answer & Unanswerable refused 8/9 $\to$ 9/9 \\
-Calculator with fixed operations & It returned nothing for $16\times16$ and some differences, and the model ignored its result & Numerical questions 1/6 $\to$ 2/6 for the agent. One question is within noise \\
-Table rows and headers & Stacked cells and spanning headers gave wrong values on two BEA tables & Correct values on the tables we checked, but one BEA question now ranks lower (recall@5 94.2\% $\to$ 92.3\%) \\
-Shared parsing across variants & The benchmark parsed every PDF once per configuration & Benchmark time 31 $\to$ 27 min (faster answers also helped) \\
+Calculator grounding & It took operands from the wrong table row and overrode a stated ``+\$6.8 billion'' & English 73.1\% $\to$ 75.0\%. Numerical questions still 2/6 \\
+Cited answers ending in ``not found'' & A correct, cited Hindi answer followed by the marker was scored as a refusal & Multilingual 83.3\% $\to$ 94.4\% in that run \\
+Table captions and section labels & Look-alike arXiv tables could not be told apart. BEA rows carried the previous table's title & English 75.0\% $\to$ 76.9\%. Table questions 9/12 $\to$ 10/12. One BEA question now ranks lower \\
 \bottomrule
 \end{tabularx}}
 \note{One change made results worse and was reverted: a stricter ``refuse unless the exact fact is present'' prompt rule raised false refusals from
-3.8\% to 21.2\% in a single-pass run. Net effect on the English set: answer accuracy is unchanged at 73.1\% (numerical +1, unanswerable +1, multi-hop $-1$).}
+3.8\% to 21.2\% in a single-pass run. Net effect of this week's changes on the English set: 73.1\% $\to$ 76.9\% (four questions fixed, two regressed).}
 
 \section{Limitations}
 \begin{itemize}

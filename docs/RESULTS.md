@@ -3,6 +3,97 @@
 All numbers come from code in this repository and can be reproduced. Section 4
 lists the exact commands.
 
+## 0. Final validation (2026-10-26): the project notebook, top to bottom, on a T4
+
+Colab's free GPU quota was used up by the earlier runs, so the final runs used a **Kaggle
+notebook with the same GPU (Tesla T4, 15,360 MiB)**, pinned to one T4 with
+`CUDA_VISIBLE_DEVICES=0`. Kaggle offers two T4s; only the final notebook run was
+restricted to one. The final run is `notebooks/Local_Agentic_RAG.ipynb`, unchanged, plus
+one setup cell that copies the code to `/content`. It completed in 32 minutes:
+
+* install, Tesseract with eng+hin+mar, Ollama install, and the Qwen2.5-7B pull;
+* Q&A demo, including a follow-up resolved from chat history and a correct refusal;
+* chat UI launched (`Running on local URL`);
+* retrieval ablation, English answer benchmark, multilingual benchmark, resource report.
+
+There were no errors. The memory watchdog restarted the Ollama runner 5 times and no question failed.
+
+| English set (61 q) | single pass (`hybrid_rerank`) | **adaptive agent (default)** |
+|---|---:|---:|
+| Answer accuracy [95% CI] | 71.2% [57.7–82.7] | **76.9% [63.5–88.5]** |
+| Fact recall | 74.7% | 80.1% |
+| False refusal rate | 3.8% | 1.9% |
+| Unanswerable correctly refused | 9/9 | 9/9 |
+| Citation precision | 73.7% | 78.4% |
+| Page recall@5 / MRR | 94.2% / 0.883 | 96.2% / 0.915 |
+| Latency p50 / p95 | 3.2 / 6.1 s | 6.6 / 23.0 s |
+
+Agent by category: factual 14/14 · definition 5/5 · table 10/12 · comparison 4/6 ·
+multi-hop 5/9 · numerical 2/6 · unanswerable 9/9.
+
+| Multilingual set (20 q) | agentic (default) | agentic with English-only models |
+|---|---:|---:|
+| Answer accuracy (18 answerable) | 88.9% (16/18) | 88.9% |
+| Unanswerable refused | 2/2 | 2/2 |
+| Page recall@5 / MRR | 100% / 0.972 | 94.4% / 0.880 |
+| Citation precision | 85.3% | 94.1% |
+| By language (default) | Hindi 7/8 · Hinglish 3/3 · Marathi 3/3 · English→Indic 3/4 | Hindi 8/8 · Hinglish 2/3 · Marathi 3/3 · English→Indic 3/4 |
+
+Retrieval ablation (page recall@5): MiniLM 76.0% · BGE-en 80.8% · BM25 81.7% · hybrid-en
+81.7% · hybrid-en + reranker 96.2% · BGE-M3 dense 84.6% · **BGE-M3 hybrid + reranker
+(default) 94.2%** (recall@1 68.3%, MRR 0.883; it was 92.3% / 66.3% / 0.872 before the
+table fixes).
+
+Resources: GPU memory in use 9,069 of 15,360 MiB (LLM + embedder + reranker). Ollama install 96 s,
+model pull and warm-up 134 s, retrieval models 61 s, retrieval ablation 113 s, English answer benchmark
+(2 configurations) 859 s, multilingual (2 configurations) 444 s, scanned 2-page Hindi OCR ingest 16 s.
+
+### How we got there: measured round by round (Kaggle 2×T4, one run per GPU)
+
+Each round ran the default agent on both sets; changes were kept only when the numbers held.
+
+| Round | Change | English | Multilingual |
+|---|---|---:|---:|
+| Baseline | `main` as of 2026-10-25 (reproduces the last Colab run exactly: same 14 failures) | 73.1% | 83.3% (15/18) |
+| it1 | calculator grounding: operands must sit on the cited row and column; stated changes skip it; ID ranges counted | 75.0% | 83.3% |
+| it2 (×2) | + keep a cited answer that ends with the "not found" marker | 75.0% / 75.0% | 94.4% / 94.4% |
+| it3 | + table captions and correct table section labels | 76.9% | 94.4% |
+| Final notebook | + one retry when an arithmetic question gets no calculation | **76.9%** | **88.9%** |
+
+* **Noise.** The two it2 runs used identical code and failed exactly the same questions,
+  so single-question changes in the English agent column are real. The multilingual set
+  is noisier: one Hindi question flipped between it3 and the final run (the planner
+  returned invalid JSON once and fell back). On the final code, multilingual is
+  **88.9–94.4%** across two runs. Single pass varied by two questions (67.3% vs 71.2%).
+* **What each fix bought.**
+  * Captions: the model now tells arXiv Table 2 (NQ) from the look-alike Table A.3, which
+    fixed q06, q11 and q13.
+  * Trailing-marker fix: the Hinglish two-part question and the scanned-Hindi question
+    were correct answers that had been discarded.
+  * Calculator: fixed BEA q13 (no longer overrides "increased $6.8 billion") and NIST q10
+    (9 actions across a page break).
+* **What got worse.**
+  * BEA q09 regressed: its page lost rank once its *wrong* section label was corrected.
+    This was predicted by the CPU retrieval check.
+  * BEA q13 regressed again in it3: the level ($3,929.7 billion) sits on page 17, which
+    dropped out of the top passages.
+  * NIST q11 ("months between") passes on `main` but not after the calculator change: the
+    first calculator call returns nothing and the generator refuses. In one traced run the
+    agent's second round computed the right 18 months. A retry for empty calculations was
+    then added, but the final run still refused this question.
+* **Caveat.** These fixes were designed after reading the failures of this same benchmark,
+  so gains on exactly those questions overstate how well they generalise. The fixes
+  themselves are generic (operand grounding, caption attachment, sentinel handling), but
+  the benchmark is not a held-out test of them.
+
+Remaining English failures (12):
+* numerical: wrong table cell chosen (arXiv q10, BEA q09, q10) and NIST q11;
+* table: BEA q06 (GDP-level rows never reach the candidate pool) and BEA q08 (right page
+  retrieved, wrong value);
+* multi-hop: arXiv q14 (needs pages 8 and 12), BEA q11, BEA q13, NIST q13 (one of two
+  listed characteristics missing);
+* comparison: BEA q15 (revision values) and NIST q15 (definition on page 14 not used).
+
 ## 1. Benchmark
 
 61 hand-written questions over 3 public PDFs (details in `benchmark/README.md`):

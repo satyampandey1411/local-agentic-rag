@@ -1,4 +1,4 @@
-# Project status — 2026-10-25 (after the final improvement pass, 23:00 IST)
+# Project status — 2026-10-26 (after the Kaggle validation round)
 
 Honest snapshot of what is implemented, what is verified and how, and what is
 still outstanding.
@@ -19,14 +19,30 @@ still outstanding.
 | Evaluation harness: metrics, bootstrap CIs, resumable runner, reports | ✅ | 118 tests |
 | Benchmark: 61 questions / 3 PDFs, validator | ✅ | `validate.py`: 0 errors |
 | Colab helpers (Ollama install/start, GPU/VRAM report, HTML answer card) | ✅ | Ollama setup verified on a real T4 (3 min incl. model pull) |
-| Notebook `notebooks/Local_Agentic_RAG.ipynb` | ✅ | executed top to bottom ("Run all", then "Restart session and run all" after two bug fixes) in a fresh free Colab T4 runtime on 2026-10-25: install, OCR packs, Ollama, ingestion, Q&A, chat UI, retrieval + answer benchmarks, multilingual section |
+| Notebook `notebooks/Local_Agentic_RAG.ipynb` | ✅ | 2026-10-26: executed top to bottom on a Kaggle T4 (same GPU, one card) in 32 min with no errors, every benchmark included (RESULTS §0). Earlier: executed top to bottom ("Run all", then "Restart session and run all" after two bug fixes) in a fresh free Colab T4 runtime on 2026-10-25: install, OCR packs, Ollama, ingestion, Q&A, chat UI, retrieval + answer benchmarks, multilingual section |
 | Gradio chat UI | ✅ | launched inline in Colab on the T4 (gradio 6.30); a live chat turn returned a verified, cited answer (screenshot: docs/img/chat_ui_colab_t4.png) |
 | HTML answer card + follow-up questions | ✅ | rendered in the Colab kernel; follow-up rewritten from chat history; the verifier flagged a contradictory claim with an amber badge |
 
-| Calculator tool for quantitative questions (operand extraction → AST-safe evaluation) | ✅ / ⚠️ | 34 unit tests; on the T4 it computes correctly but the 7B model often extracts the wrong operands (see RESULTS) |
+| Calculator tool for quantitative questions (operand extraction → grounding check → AST-safe evaluation) | ✅ / ⚠️ | unit tests incl. 30 grounding tests; operands must sit on the cited row and column, ungrounded extractions are retried once then dropped; numerical questions are still 2/6 because the 7B model often picks a grounded but wrong cell (RESULTS §0) |
 | Independent code review | ✅ | 7 confirmed edge-case bugs (empty pools, sub-query slot eviction, stale verdict/hint, non-finite calculator results, cache key, ablation config) fixed with regression tests |
 
-Test suite: **430 passed**, offline, ~15 s (`pytest -q`). `ruff check .` clean.
+Test suite: **472 passed**, offline, ~15 s (`pytest -q`). `ruff check .` clean.
+
+## Validation round on Kaggle (2026-10-26)
+
+Colab's free GPU quota was used up, so this round ran on a Kaggle T4. Each change was measured on the GPU
+before being kept (RESULTS §0 has the round-by-round table and the noise check).
+
+| Change | Evidence it was needed | Measured (Kaggle T4) |
+|---|---|---|
+| Calculator operands grounded in the cited passage (row and column), stated changes skip the calculator, ID ranges counted deterministically, one retry for empty calculations | wrong cells (2.61/−3.52 for the GDP swing), a correct "+$6.8 billion" overridden, 8 of 9 actions counted | English 73.1% → 75.0% (BEA q13, NIST q10 fixed; NIST q11 regressed) |
+| Keep a cited answer when the model appends the "not found" marker | Kaggle trace: a correct, cited Hindi answer followed by the marker was scored as a refusal | multilingual 83.3% → 94.4% (Hinglish two-part and scanned-Hindi questions) |
+| Table captions attached to Markdown tables; table chunks no longer inherit the previous table's title | arXiv Table 2 (NQ) indistinguishable from the look-alike Table A.3; BEA Table 12 rows labelled "Table 10" | English 75.0% → 76.9%, table questions 9/12 → 10/12, page recall@5 94.2% → 96.2%; BEA q09 regressed |
+| Runner watchdog scoped to its own Ollama server | two servers (one per GPU) could restart each other's runner | parallel runs on 2 GPUs completed with no errors |
+| Notebook built into a temp dir by the tests, with stable cell ids | running the tests rewrote the committed notebook | rebuilding is byte-identical; a test catches a stale notebook |
+
+Final (notebook, top to bottom): English agent **76.9%** [63.5–88.5] (single pass 71.2%), 9/9 unanswerable refused,
+citation precision 78.4%; multilingual **88.9–94.4%** across two runs on the final code; GPU memory 8.9 of 15 GB.
 
 ## Final improvement pass (2026-10-25 evening)
 
