@@ -349,16 +349,23 @@ def start_ollama(
             break
         time.sleep(0.5)
     status = "exited with code " + str(proc.returncode) if proc.poll() is not None else "timed out"
+    log.close()  # the server never came up, so nothing else will write to it
     raise RuntimeError(
         f"Ollama server failed to start ({status}) at http://{host}.\n"
         f"Last lines of {log_path}:\n{_tail(log_path)}"
     )
 
 
-def _runner_anon_rss() -> list[tuple[int, int]]:
-    """(pid, anonymous RSS bytes) for every Ollama model-runner process (Linux /proc)."""
+def _runner_anon_rss(
+    server_pid: int | None = None, proc_root: str = "/proc"
+) -> list[tuple[int, int]]:
+    """(pid, anonymous RSS bytes) for Ollama model-runner processes (Linux /proc).
+
+    With ``server_pid``, only runners spawned by that ``ollama serve`` are returned, so two
+    servers (one per GPU) never restart each other's runner mid-request.
+    """
     found = []
-    for status in Path("/proc").glob("[0-9]*/status"):
+    for status in Path(proc_root).glob("[0-9]*/status"):
         try:
             text = status.read_text()
         except OSError:
@@ -373,13 +380,19 @@ def _runner_anon_rss() -> list[tuple[int, int]]:
                 continue
             if b"runner" not in cmdline[1:2]:
                 continue
+        if server_pid is not None:
+            parent = re.search(r"PPid:\s+(\d+)", text)
+            if not parent or int(parent.group(1)) != server_pid:
+                continue
         match = re.search(r"RssAnon:\s+(\d+) kB", text)
         if match:
             found.append((int(status.parent.name), int(match.group(1)) * 1024))
     return found
 
 
-def start_runner_watchdog(max_anon_gb: float = 4.0, interval: float = 5.0) -> threading.Thread:
+def start_runner_watchdog(
+    max_anon_gb: float = 4.0, interval: float = 5.0, server_pid: int | None = None
+) -> threading.Thread:
     """Restart Ollama's model runner when its anonymous memory grows past ``max_anon_gb``.
 
     On Colab (12.7 GB host RAM) we measured the runner's anonymous memory growing by
@@ -396,7 +409,7 @@ def start_runner_watchdog(max_anon_gb: float = 4.0, interval: float = 5.0) -> th
         while True:
             time.sleep(interval)
             try:
-                for pid, anon in _runner_anon_rss():
+                for pid, anon in _runner_anon_rss(server_pid):
                     if anon > limit and inflight_requests() == 0:
                         os.kill(pid, signal.SIGTERM)
                         print(
@@ -426,12 +439,13 @@ def setup_llm(
     with timed("ollama_install"):
         install_ollama()
     with timed("ollama_start"):
-        start_ollama(host)
+        server = start_ollama(host)
     llm = OllamaLLM(model, host=f"http://{_strip_scheme(host)}", num_ctx=num_ctx, **llm_kwargs)
     with timed("model_pull_and_warmup"):
         llm.ensure_ready()
     if watchdog and Path("/proc").is_dir():
-        start_runner_watchdog()
+        # Scope the watchdog to our own server when we started it (None: any runner).
+        start_runner_watchdog(server_pid=server.pid if server else None)
     print(f"LLM ready: {model} (num_ctx={num_ctx})")
     return llm
 

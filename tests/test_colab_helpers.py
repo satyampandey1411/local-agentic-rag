@@ -204,6 +204,21 @@ def test_install_ollama_skips_when_present(monkeypatch):
     assert colab.install_ollama(verbose=False) == "/usr/bin/ollama"
 
 
+def test_runner_scan_can_be_scoped_to_one_server(tmp_path):
+    def proc(pid, name, ppid, anon_kb, cmdline=b""):
+        d = tmp_path / str(pid)
+        d.mkdir()
+        (d / "status").write_text(f"Name:\t{name}\nPPid:\t{ppid}\nRssAnon:\t{anon_kb} kB\n")
+        (d / "cmdline").write_bytes(cmdline)
+
+    proc(11, "ollama", 1, 10, b"ollama\0serve\0")  # a server, not a runner
+    proc(21, "ollama", 11, 5000, b"ollama\0runner\0--model\0x\0")  # runner of server 11
+    proc(22, "llama-server", 12, 7000)  # runner of another server (other GPU)
+    all_runners = dict(colab._runner_anon_rss(proc_root=str(tmp_path)))
+    assert all_runners == {21: 5000 * 1024, 22: 7000 * 1024}
+    assert dict(colab._runner_anon_rss(server_pid=11, proc_root=str(tmp_path))) == {21: 5000 * 1024}
+
+
 def test_timed_records(capsys):
     with colab.timed("unit_step"):
         pass
