@@ -429,6 +429,7 @@ print_resource_report()
 | a scanned PDF gives `empty pages` / OCR warnings | `!apt-get install -y tesseract-ocr` and ingest again with `pipe.ingest(path, use_cache=False)` |
 | `ModuleNotFoundError: local_agentic_rag` | re-run the install cell (it adds `src/` to `sys.path`) or restart the runtime |
 | benchmark interrupted | re-run the cell; finished answers are reused from `/content/results` |
+| Colab: "cannot connect to a GPU due to usage limits" | the notebook also runs unchanged on a Kaggle notebook with a T4 (Settings > Accelerator, internet on): copy the code to `/content/local-agentic-rag` and Run all |
 """),
 ]
 
