@@ -198,6 +198,26 @@ def test_table_header_row_is_the_first_grid_row(table_doc):
     assert "following table" not in table
 
 
+def test_table_caption_is_attached_to_its_table(pdf_dir):
+    path = pdf_dir / "captioned.pdf"
+    make_table_pdf(path, caption="Table 1: Revenue by region in fiscal 2024.")
+    page = parse_pdf(path).pages[0]
+    lines = page.tables[0].splitlines()
+    assert lines[0] == "Table 1: Revenue by region in fiscal 2024."
+    assert "Region" in lines[1] and "Revenue" in lines[1]
+    # The caption moves out of the running text; the paragraph after it stays.
+    assert "Table 1:" not in page.text
+    assert "Growth was strongest in Eastvale" in page.text
+
+
+def test_table_reference_in_text_is_not_a_caption(pdf_dir):
+    path = pdf_dir / "referenced.pdf"
+    make_table_pdf(path, caption="Table 1 shows that Eastvale grew fastest.")
+    page = parse_pdf(path).pages[0]
+    assert page.tables[0].splitlines()[0].startswith("|")
+    assert "Table 1 shows that Eastvale grew fastest." in page.text
+
+
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------

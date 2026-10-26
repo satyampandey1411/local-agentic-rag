@@ -383,10 +383,57 @@ def _extract_page(
             )
         )
 
+    raw.blocks, raw.tables = _attach_captions(raw.blocks, tables)
     raw.blocks = _reading_order(raw.blocks, width)
     if image_only and not raw.blocks and not ocr_applied:
         raw.needs_ocr = True
     return raw
+
+
+#: "Table 2: ...", "Table A.3: ...", "TABLE IV. ..." at the start of a text block.
+_CAPTION_RE = re.compile(r"^(Table|TABLE|Tab\.)\s+([A-Z]\.?)?([0-9]+|[IVXL]+)(\.[0-9]+)*\s*[:.]")
+#: Largest vertical gap (points) between a table's edge and its caption block.
+CAPTION_GAP = 30.0
+MAX_CAPTION_CHARS = 400
+
+
+def _attach_captions(
+    blocks: list[_RawBlock], tables: list[tuple[str, tuple]]
+) -> tuple[list[_RawBlock], list[str]]:
+    """Prefix each Markdown table with its caption block ("Table 2: ... on NQ ...").
+
+    ``find_tables`` returns only the grid, so a table chunk would not say *which*
+    table it is: an arXiv paper with the same columns in Table 2 (NQ) and Table A.3
+    (another dataset) gave the reader two indistinguishable chunks.  The caption is
+    the nearest "Table N" block directly above or below the table and overlapping it
+    horizontally; it moves out of the running text, where it otherwise lands in the
+    middle of the paragraph that flows around the table.  Serialised statistical
+    tables already start with the title read above them and are left alone.
+    """
+    texts = [md for md, _ in tables]
+    pairs = []
+    for t, (md, bbox) in enumerate(tables):
+        if not md.lstrip().startswith("|"):
+            continue
+        for b, block in enumerate(blocks):
+            if len(block.text) > MAX_CAPTION_CHARS or not _CAPTION_RE.match(block.text):
+                continue
+            x0, y0, x1, y1 = block.bbox
+            overlap = min(x1, bbox[2]) - max(x0, bbox[0])
+            if overlap < 0.5 * min(x1 - x0, bbox[2] - bbox[0]):
+                continue
+            gap = y0 - bbox[3] if y0 >= bbox[1] else bbox[1] - y1
+            if -2.0 <= gap <= CAPTION_GAP:
+                pairs.append((gap, t, b))
+    used_tables: set[int] = set()
+    used_blocks: set[int] = set()
+    for _, t, b in sorted(pairs):  # nearest pairs first; one caption per table
+        if t in used_tables or b in used_blocks:
+            continue
+        used_tables.add(t)
+        used_blocks.add(b)
+        texts[t] = f"{blocks[b].text}\n{texts[t]}"
+    return [blk for b, blk in enumerate(blocks) if b not in used_blocks], texts
 
 
 def _tessdata() -> str | None:

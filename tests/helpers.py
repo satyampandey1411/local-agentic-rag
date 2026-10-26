@@ -274,8 +274,8 @@ def make_two_column_pdf(path: Path) -> None:
     c.save()
 
 
-def make_table_pdf(path: Path) -> None:
-    """One page with a heading, a paragraph and a ruled (grid) table."""
+def make_table_pdf(path: Path, caption: str | None = None) -> None:
+    """One page with a heading, a paragraph and a ruled (grid) table (optional caption below)."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import LETTER
     from reportlab.lib.styles import getSampleStyleSheet
@@ -308,6 +308,13 @@ def make_table_pdf(path: Path) -> None:
         Spacer(1, 12),
         table,
     ]
+    if caption:
+        story += [
+            Spacer(1, 6),
+            Paragraph(caption, styles["BodyText"]),
+            Spacer(1, 12),
+            Paragraph("Growth was strongest in Eastvale over the period.", styles["BodyText"]),
+        ]
     SimpleDocTemplate(str(path), pagesize=LETTER).build(story)
 
 

@@ -256,3 +256,19 @@ def test_arxiv_nq_table_rows_are_separated():
     assert "| Contriever MSMARCO | avg | 0.50 | 0.71 |" in md
     assert "| Contriever | avg | 0.25 | 0.41 |" in md
     assert "| Dragon+ | cls | 0.54 | 0.74 |" in md
+
+
+@pytest.mark.skipif(not ARXIV.exists(), reason="arXiv benchmark PDF absent")
+def test_arxiv_tables_carry_their_captions():
+    # Table 2 (NQ) and Table A.3 (Re-DocRED) have the same columns and models; only the
+    # caption tells the reader which dataset a value belongs to.
+    pytest.importorskip("pymupdf")
+    from local_agentic_rag.ingest.pdf import parse_pdf
+
+    doc = parse_pdf(ARXIV, ocr="off")
+    nq = doc.pages[2].tables[0]
+    assert nq.startswith("Table 2: Models’ performance on NQ dataset")
+    assert "| Dragon RoBERTa | cls | 0.55 | 0.75 |" in nq
+    assert "Table 2:" not in doc.pages[2].text  # no longer spliced into the paragraph
+    redocred = next(t for t in doc.pages[11].tables if "| Dragon RoBERTa | cls | 0.53" in t)
+    assert redocred.startswith("Table A.3: Models’ performance on our refined redo")

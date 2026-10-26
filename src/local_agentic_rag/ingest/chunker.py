@@ -23,6 +23,8 @@ from local_agentic_rag.schema import Chunk, ParsedDocument
 TokenCounter = Callable[[str], int]
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+(?=[A-Z0-9\"'(\[•\-])")
+# "Table 7.", "Table A.3:", "Appendix Table B." — the label that names a table.
+_TABLE_LABEL_RE = re.compile(r"\b(?:Appendix\s+)?Table\s+[A-Z]?(?:\d+(?:\.\d+)*)?(?=[.:]\s)")
 
 
 def approx_token_count(text: str) -> int:
@@ -121,7 +123,7 @@ def chunk_document(
                         chunk_id=f"{doc.doc_id}-p{page.page}-t{t_index}-{part_index}",
                         doc_id=doc.doc_id,
                         page=page.page,
-                        section=page_section_start or section,
+                        section=_table_section(table, page_section_start or section),
                         text=part,
                         kind="table",
                         n_tokens=count_tokens(part),
@@ -129,6 +131,23 @@ def chunk_document(
                     )
                 )
     return chunks
+
+
+def _table_section(table: str, inherited: str) -> str:
+    """Section of a table's chunks: the one at its page start, unless that names another table.
+
+    Statistical releases print one table per page with its title as the page's
+    first heading, so the section at the page start is the previous page's table
+    ("Table 10. Corporate Profits ..." over the rows of Table 12).  A serialised
+    table starts with its own title line; when that names another table than the
+    inherited section, the title line is the section.
+    """
+    title = table.strip().splitlines()[0] if table.strip() else ""
+    own = _TABLE_LABEL_RE.search(title)
+    old = _TABLE_LABEL_RE.search(inherited)
+    if own is None or old is None or own.group(0) == old.group(0):
+        return inherited
+    return title[own.start() :].strip()[:200]
 
 
 def _split_units(text: str, max_tokens: int, count_tokens: TokenCounter) -> list[str]:
@@ -172,10 +191,12 @@ def _overlap_tail(text: str, overlap_tokens: int, count_tokens: TokenCounter) ->
 
 def _split_table(markdown: str, max_tokens: int, count_tokens: TokenCounter) -> list[str]:
     lines = [ln for ln in markdown.splitlines() if ln.strip()]
-    if count_tokens(markdown) <= max_tokens or len(lines) <= 3:
+    # Markdown tables repeat caption (if any) + header + separator; serialised tables
+    # repeat their title line.
+    first_row = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
+    n_header = 1 if first_row is None else first_row + 2
+    if count_tokens(markdown) <= max_tokens or len(lines) <= max(3, n_header + 1):
         return [markdown]
-    # Markdown tables repeat header + separator; serialised tables repeat their title line.
-    n_header = 2 if lines[0].lstrip().startswith("|") else 1
     header, rows = lines[:n_header], lines[n_header:]
     parts: list[str] = []
     current: list[str] = []

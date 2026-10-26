@@ -258,6 +258,21 @@ def test_table_split_repeats_markdown_header():
     assert [t.chunk_id for t in tables] == [f"d-p1-t0-{i}" for i in range(len(tables))]
 
 
+def test_captioned_table_split_repeats_caption_and_header():
+    md = "Table 2: Revenue by region.\n" + markdown_table(40)
+    parts = _split_table(md, 80, approx_token_count)
+    assert len(parts) > 2
+    for part in parts:
+        lines = part.splitlines()
+        assert lines[:3] == [
+            "Table 2: Revenue by region.",
+            "|Region|Revenue|Growth|",
+            "|---|---|---|",
+        ]
+        assert len(lines) > 3
+    assert [ln for p in parts for ln in p.splitlines()[3:]] == md.splitlines()[3:]
+
+
 def test_serialised_table_split_repeats_title_line():
     lines = ["Table 3. Prices"] + [
         f"Section | Item {i} | 2023 = {i}.0; 2024 = {i}.5" for i in range(30)
@@ -279,3 +294,22 @@ def test_table_section_is_section_at_page_start():
     table = next(c for c in chunk_document(doc) if c.kind == "table")
     assert table.page == 2
     assert table.section == "Before"
+
+
+def test_table_section_is_its_own_title_not_the_previous_tables():
+    # One table per page, titled at the top: the section at the page start is the
+    # previous page's table, which must not label this table's rows.
+    t12 = "Table 12. Real Gross Domestic Product by Industry Group: Percent Change"
+    serialised = f"September 25, 2025 {t12}\nMining | 2025 Q1 = -18.3; 2025 Q2 = 29.0"
+    doc = make_doc(
+        [
+            ([("heading", "Table 10. Corporate Profits by Industry: Level")], []),
+            ([("heading", t12)], [serialised]),
+            # Continued on the next page: the inherited section already names Table 12.
+            ([("paragraph", paragraph(3, 2))], [f"{t12}--Continues\nUtilities | 2025 Q2 = 1.0"]),
+            # Markdown tables (no title line) keep the section at the page start.
+            ([("heading", "Appendix")], [markdown_table(3)]),
+        ]
+    )
+    tables = [c for c in chunk_document(doc) if c.kind == "table"]
+    assert [t.section for t in tables] == [t12, t12, t12]
