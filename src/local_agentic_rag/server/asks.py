@@ -25,7 +25,9 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import inspect
 import logging
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict
@@ -88,8 +90,19 @@ class AskGate:
                 nxt.set_result(None)
 
 
+#: Streamed answer text is sent to the browser in batches: at most one batch per
+#: ``TOKEN_FLUSH_S`` seconds, or sooner once ``TOKEN_FLUSH_CHARS`` characters are waiting.
+#: A model emits 30-60 tokens a second; one SSE frame per token would mostly be framing.
+TOKEN_FLUSH_S = 0.05
+TOKEN_FLUSH_CHARS = 200
+
+
 class AskJob:
-    """One ``library.ask`` call running in a worker thread, with its steps queued."""
+    """One ``library.ask`` call running in a worker thread, with its events queued.
+
+    ``events`` carries ``("step", payload)`` and, when ``stream_tokens`` is set,
+    ``("token", {"text": str, "reset": bool})`` items in the order they happened.
+    """
 
     def __init__(
         self,
@@ -100,11 +113,20 @@ class AskJob:
         doc_ids: list[str] | None,
         history: list[tuple[str, str]],
         stream_steps: bool,
+        stream_tokens: bool | None = None,
     ) -> None:
         self.loop = asyncio.get_running_loop()
-        self.steps: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.events: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        if stream_tokens is None:
+            stream_tokens = stream_steps
+        self._pending = ""  # token text waiting for the next batch (event-loop thread only)
+        self._last_flush = 0.0
+        self._timer: asyncio.TimerHandle | None = None
         on_step: Callable[[TraceStep], None] | None = self._on_step if stream_steps else None
-        cf = executor.submit(library.ask, question, doc_ids, history, on_step)
+        kwargs: dict[str, Any] = {}
+        if stream_tokens and _accepts_on_token(library):
+            kwargs["on_token"] = self._on_token
+        cf = executor.submit(library.ask, question, doc_ids, history, on_step, **kwargs)
         # The gate slot is held until the *thread* finishes, even if the client
         # already got a timeout - see the module docstring.
         cf.add_done_callback(lambda _f: self._threadsafe(gate.release))
@@ -119,4 +141,54 @@ class AskJob:
             payload = asdict(step)
         except TypeError:
             payload = {"step": str(getattr(step, "step", "step")), "detail": {}, "seconds": 0.0}
-        self._threadsafe(self.steps.put_nowait, payload)
+        self._threadsafe(self._queue_step, payload)
+
+    def _queue_step(self, payload: dict[str, Any]) -> None:  # event-loop thread
+        # Text held back for batching happened before this step: send it first.
+        if self._pending:
+            self.flush_tokens()
+        self.events.put_nowait(("step", payload))
+
+    def _on_token(self, event: dict[str, Any]) -> None:  # runs in the worker thread
+        self._threadsafe(self._ingest_token, event)
+
+    # ---- token batching (all below runs on the event-loop thread)
+
+    def _ingest_token(self, event: dict[str, Any]) -> None:
+        if event.get("reset"):
+            # A new generation starts: text of the old one is moot, so drop it unsent.
+            self._cancel_timer()
+            self._pending = ""
+            self.events.put_nowait(("token", {"text": "", "reset": True}))
+            return
+        self._pending += str(event.get("text", ""))
+        if len(self._pending) >= TOKEN_FLUSH_CHARS:
+            self.flush_tokens()
+            return
+        wait = self._last_flush + TOKEN_FLUSH_S - time.monotonic()
+        if wait <= 0:
+            self.flush_tokens()  # idle for a while: the first text goes out immediately
+        elif self._timer is None:
+            self._timer = self.loop.call_later(wait, self.flush_tokens)
+
+    def flush_tokens(self) -> None:
+        """Queue any batched text now (also called once before the final ``answer``)."""
+        self._cancel_timer()
+        if self._pending:
+            self.events.put_nowait(("token", {"text": self._pending, "reset": False}))
+            self._pending = ""
+        self._last_flush = time.monotonic()
+
+    def _cancel_timer(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+
+def _accepts_on_token(library: LibraryProtocol) -> bool:
+    """Libraries written before token streaming existed simply keep working without it."""
+    try:
+        params = inspect.signature(library.ask).parameters
+    except (TypeError, ValueError):
+        return False
+    return "on_token" in params or any(p.kind is p.VAR_KEYWORD for p in params.values())

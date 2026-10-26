@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from typing import Any
 
 Message = dict[str, str]
@@ -19,6 +20,12 @@ Message = dict[str, str]
 
 class LLMError(RuntimeError):
     """Backend failure (server down, model missing, timeout)."""
+
+
+class LLMTimeoutError(LLMError):
+    """The backend accepted the request but did not answer within the read timeout.
+
+    Not retried and not worth a second attempt by another route: it would take as long again."""
 
 
 class LLMOutputError(LLMError):
@@ -39,6 +46,23 @@ class LLM(ABC):
         stop: list[str] | None = None,
     ) -> str:
         """Return the assistant reply text."""
+
+    def chat_stream(
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        stop: list[str] | None = None,
+    ) -> Iterator[str]:
+        """Yield the reply as text pieces as they are generated.
+
+        The default yields the whole ``chat()`` result once, so every backend works with
+        callers that stream; backends with real token streaming override this.  Free text
+        only: schema-constrained (JSON) calls always go through ``chat``.  Joining the
+        pieces and stripping whitespace gives what ``chat`` would have returned.
+        """
+        yield self.chat(messages, max_tokens=max_tokens, temperature=temperature, stop=stop)
 
     def chat_json(
         self,

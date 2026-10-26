@@ -104,6 +104,7 @@ and replacing them is the most common way to break a Colab runtime.
 REPO_URL = ""                                   # e.g. "https://github.com/<you>/local-agentic-rag.git" (optional)
 REPO_ZIP = "/content/local-agentic-rag.zip"     # used when REPO_URL is empty
 REPO_DIR = "/content/local-agentic-rag"
+FAST_TABLE_DETECTION = True                     # GPU table detection for PDFs (needs a GPU; falls back to the CPU)
 """),
     code(r"""
 import os
@@ -149,6 +150,50 @@ for mod in ["torch", "transformers", "sentence_transformers", "fitz", "gradio", 
         print(f"{mod:<22} {getattr(m, '__version__', None) or getattr(m, 'VersionBind', 'ok')}")
     except ImportError as exc:
         print(f"{mod:<22} MISSING ({exc})")
+"""),
+    md(r"""
+### Faster table detection on the GPU (optional)
+
+PDF table detection runs a small neural network (PyMuPDF's ONNX layout model). On the CPU it
+is the slowest part of reading table-heavy PDFs. With `FAST_TABLE_DETECTION = True` the next cell
+swaps in the GPU build of ONNX Runtime and lets the parse workers use the T4: a 1,000-page,
+table-heavy PDF parsed **1.9x faster** (225 s to 119 s on a Kaggle T4) with identical output.
+It costs about 0.7 GB of GPU memory per parse worker. The cell checks that the GPU build really
+works before turning it on, and if anything fails it keeps the CPU build and says so. Set the
+flag to `False` to skip it. Run it before ingesting any PDF.
+"""),
+    code(r"""
+def enable_gpu_table_detection():
+    probe = ("import onnxruntime as o; o.preload_dlls(); "
+             "raise SystemExit(0 if 'CUDAExecutionProvider' in o.get_available_providers() else 1)")
+
+    def run(*cmd):
+        try:
+            return subprocess.run([sys.executable, *cmd], capture_output=True, timeout=900).returncode == 0
+        except Exception:
+            return False
+
+    def pip(*args):
+        return run("-m", "pip", "-q", *args)
+
+    try:
+        if not shutil.which("nvidia-smi") or subprocess.run(["nvidia-smi"], capture_output=True).returncode:
+            return "no CUDA GPU visible"
+        pip("uninstall", "-y", "onnxruntime")
+        if pip("install", "onnxruntime-gpu[cuda,cudnn]") and run("-c", probe):
+            os.environ["LOCAL_RAG_ONNX_GPU"] = "1"
+            return None
+        pip("uninstall", "-y", "onnxruntime-gpu")
+        pip("install", "onnxruntime")
+        return "the GPU build of ONNX Runtime did not work"
+    except Exception as exc:
+        pip("install", "onnxruntime")
+        return f"{type(exc).__name__}: {exc}"
+
+
+problem = enable_gpu_table_detection() if FAST_TABLE_DETECTION else "FAST_TABLE_DETECTION is False"
+print("Table detection runs on the GPU." if problem is None
+      else f"Table detection will run on the CPU ({problem}).")
 """),
     # ------------------------------------------------------------------ 3. LLM
     md(r"""

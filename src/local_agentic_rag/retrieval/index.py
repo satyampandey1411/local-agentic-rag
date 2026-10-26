@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
 
 import numpy as np
@@ -23,23 +22,17 @@ import numpy as np
 from local_agentic_rag.lang import dominant_script
 from local_agentic_rag.retrieval.bm25 import BM25Index
 from local_agentic_rag.schema import Chunk
+from local_agentic_rag.sections import INLINE_SECTION_RE, SECTION_HEAD_RE
 
 logger = logging.getLogger(__name__)
 
 
-#: A numbered section heading: "§ 164. Taxes", "Sec. 7203.", "Section 2.1 Scope", "4.3 Results".
-#: A bare integer does not count ("2010 (I) In general" is a year, not section 2010).
-_SECTION_HEAD_RE = re.compile(
-    r"^\s*(?:(?:§+\s*|(?:section|sec\.)\s+)(\d+[A-Za-z]?(?:\.\d+)*)|(\d+(?:\.\d+)+))"
-    r"(?![\d])(?!\.\d)[.:\s]",
-    re.IGNORECASE,
-)
-#: A section start inside running text, as codes print it: "§ 164. Taxes".  Cross-references
-#: are written "section 164" and amendment notes "§ 221(a)(2)", so neither matches.
-_INLINE_SECTION_RE = re.compile(r"(?:^|\s)§\s*(\d+[A-Za-z]?)\.\s+[A-Z]")
-
-
 class DocumentIndex:
+    #: Set only on a partial index (a document still being ingested; see
+    #: ``ingest.streaming.load_partial_index``): pages covered so far / in the document.
+    pages_indexed: int | None = None
+    pages_total: int | None = None
+
     def __init__(
         self,
         doc_id: str,
@@ -65,26 +58,34 @@ class DocumentIndex:
     def section_chunks(self, number: str) -> list[int]:
         """Indices of the chunks inside numbered section ``number`` ("164", "2.1").
 
-        A chunk belongs to the last numbered heading seen before it, in document order
-        ("§164. Taxes", "Section 2.1 Scope", "4.3 Results"), including chunks under
-        unnumbered sub-headings such as "(b) Definitions"."""
+        Chunks ingested since ``Chunk.section_no`` existed carry the number of the last
+        numbered heading before them (``ingest/chunker.py``), which survives unnumbered
+        sub-headings such as "(a) General rule".  Indexes built before that have no
+        ``section_no``; for them the heading text is replayed in document order instead,
+        which fails whenever a sub-heading directly follows the numbered one.  In both
+        cases a section that begins inside a chunk's text ("... § 164. Taxes ...")
+        also claims that chunk."""
         if not hasattr(self, "_by_section"):
             by_section: dict[str, list[int]] = {}
+            has_numbers = any(c.section_no is not None for c in self.chunks)
             current = None
             heading = None
             for i, c in enumerate(self.chunks):
-                if c.section != heading:  # a new heading: does it start a numbered section?
+                if has_numbers:
+                    current = c.section_no
+                elif c.section != heading:  # a new heading: does it start a numbered section?
                     heading = c.section
-                    m = _SECTION_HEAD_RE.match(heading)
+                    m = SECTION_HEAD_RE.match(heading)
                     if m:
                         current = (m.group(1) or m.group(2)).lower()
-                starts = [x.lower() for x in _INLINE_SECTION_RE.findall(c.text)]
+                starts = [x.lower() for x in INLINE_SECTION_RE.findall(c.text)]
                 if current is not None:
                     by_section.setdefault(current, []).append(i)
                 for key in starts:  # sections that begin inside this chunk's text
                     if key != current:
                         by_section.setdefault(key, []).append(i)
-                    current = key
+                    if not has_numbers:
+                        current = key
             self._by_section = by_section
         return self._by_section.get(number.lower(), [])
 

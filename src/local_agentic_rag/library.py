@@ -42,12 +42,15 @@ from typing import Any
 
 from local_agentic_rag.agent.agent import AgenticRAG
 from local_agentic_rag.config import RAGConfig
-from local_agentic_rag.ingest.pdf import PDFParseError, open_pdf, sha256_file
+from local_agentic_rag.ingest.pdf import PDFParseError, ocr_available, open_pdf, sha256_file
 from local_agentic_rag.ingest.streaming import (
     IngestCancelled,
     IngestProgress,
     ingest_pdf,
     load_index,
+    load_partial_index,
+    partial_checkpoint,
+    store_dirs,
 )
 from local_agentic_rag.library_types import DocRecord
 from local_agentic_rag.llm.base import LLM
@@ -62,6 +65,8 @@ logger = logging.getLogger(__name__)
 MAX_LOADED_CHUNKS = 250_000
 #: Progress is written to the catalog at most this often.
 PROGRESS_INTERVAL_S = 0.5
+#: A partial index (document still being ingested) is rebuilt at most this often.
+PARTIAL_REBUILD_S = 5.0
 
 _COLUMNS = [f.name for f in fields(DocRecord)]
 
@@ -117,6 +122,11 @@ class Library:
         self._db.commit()
         self._loaded: OrderedDict[str, DocumentIndex] = OrderedDict()
         self._loaded_lock = threading.Lock()
+        # Partial indexes of documents still being ingested: doc_id -> (checkpoint key,
+        # built at, index).  Kept apart from ``_loaded`` so they never pass for a final index.
+        self._partial: dict[str, tuple[tuple, float, DocumentIndex]] = {}
+        # One lock per document so concurrent asks share a single partial-index build.
+        self._partial_locks: dict[str, threading.Lock] = {}
         self._queue: queue.Queue[str] = queue.Queue()
         self._cancel: set[str] = set()
         self._active: str | None = None
@@ -125,7 +135,13 @@ class Library:
         # Jobs interrupted by a restart resume from their checkpoint.
         for rec in self.list_documents():
             if rec.status in ("queued", "processing"):
-                self._update(rec.doc_id, status="queued", stage="Waiting to resume")
+                self._update(
+                    rec.doc_id,
+                    status="queued",
+                    stage="Waiting to resume",
+                    askable=False,
+                    pages_indexed=0,
+                )
                 self._queue.put(rec.doc_id)
         if start_worker:
             self.start()
@@ -242,6 +258,7 @@ class Library:
                 self._db.commit()
             with self._loaded_lock:
                 self._loaded.pop(doc_id, None)
+                self._partial.pop(doc_id, None)
             if self._active == doc_id:
                 self._cancel.add(doc_id)  # the running job stops and cleans up at its end
             else:
@@ -285,12 +302,24 @@ class Library:
                 return
             self._active = doc_id
         last = [0.0]
+        first_checkpoint = [True]
 
         def progress(p: IngestProgress) -> None:
             now = time.perf_counter()
-            if p.stage not in ("done", "finalising") and now - last[0] < PROGRESS_INTERVAL_S:
+            # The first pass-2 checkpoint is always recorded: it makes the document askable.
+            first = p.stage == "indexing" and p.chunks > 0 and first_checkpoint[0]
+            if (
+                p.stage not in ("done", "finalising")
+                and now - last[0] < PROGRESS_INTERVAL_S
+                and not first
+            ):
                 return
+            if first:
+                first_checkpoint[0] = False
             last[0] = now
+            partial = {}
+            if p.stage in ("indexing", "finalising") and p.chunks > 0:
+                partial = {"askable": True, "pages_indexed": min(p.pages_done, p.num_pages)}
             pages_done = p.pages_done if p.stage != "reading" else p.pages_done // 2
             if p.stage == "indexing":
                 pages_done = (p.num_pages + p.pages_done) // 2
@@ -301,6 +330,7 @@ class Library:
                     pages_done=min(pages_done, p.num_pages),
                     num_chunks=p.chunks,
                     eta_seconds=p.eta,
+                    **partial,
                 )
 
         def should_stop() -> bool:
@@ -309,7 +339,9 @@ class Library:
         outcome: tuple = ("stopped",)
         try:
             with contextlib.suppress(KeyError):
-                self._update(doc_id, status="processing", stage="Starting")
+                self._update(
+                    doc_id, status="processing", stage="Starting", askable=False, pages_indexed=0
+                )
             self.pipe.embedder.load()
             index, report = ingest_pdf(
                 self._pdf_path(doc_id),
@@ -340,7 +372,16 @@ class Library:
             return
         if outcome[0] == "failed":
             with contextlib.suppress(KeyError):
-                self._update(doc_id, status="failed", stage="", error=outcome[1], eta_seconds=None)
+                self._update(
+                    doc_id,
+                    status="failed",
+                    stage="",
+                    error=outcome[1],
+                    eta_seconds=None,
+                    askable=False,
+                )
+            with self._loaded_lock:
+                self._partial.pop(doc_id, None)
             return
         _, index, report = outcome
         if index.doc_id != doc_id:
@@ -359,6 +400,8 @@ class Library:
                 title=report.title or rec.title,
                 num_pages=report.num_pages,
                 pages_done=report.num_pages,
+                askable=False,
+                pages_indexed=report.num_pages,
                 num_chunks=report.num_chunks,
                 ocr_pages=len(report.ocr_pages),
                 warnings=report.warnings,
@@ -369,6 +412,8 @@ class Library:
         except KeyError:
             return
         self._remember(doc_id, index)
+        with self._loaded_lock:
+            self._partial.pop(doc_id, None)
 
     # ------------------------------------------------------------------ indexes
 
@@ -395,6 +440,68 @@ class Library:
         self._remember(doc_id, index)
         return index
 
+    def _index_dir(self, doc_id: str) -> Path | None:
+        """Where pass 2 writes this document's checkpointed index (same path as ingest_pdf)."""
+        _, _, sha = self._row(doc_id)
+        _, index_dir = store_dirs(self.store, sha, self.config, ocr_available(self.config.ocr))
+        return index_dir
+
+    def partial_index(self, doc_id: str) -> DocumentIndex | None:
+        """Index over the checkpointed prefix of a document still being ingested, or None.
+
+        Rebuilt when the ingest thread has committed a newer checkpoint, but at most every
+        ``PARTIAL_REBUILD_S`` seconds; in between the previous one is reused.  Read-only.
+        """
+        index_dir = self._index_dir(doc_id)  # KeyError if the document is gone
+        state = partial_checkpoint(index_dir)
+        if state is None:
+            return None
+        key = (state["chunk_bytes"], state["vector_bytes"], state["pages_done"])
+        cached = self._cached_partial(doc_id, key)
+        if cached is not None:
+            return cached
+        with self._loaded_lock:
+            build_lock = self._partial_locks.setdefault(doc_id, threading.Lock())
+        with build_lock:  # one build per document: the next waiter reuses its result
+            cached = self._cached_partial(doc_id, key)
+            if cached is not None:
+                return cached
+            index = load_partial_index(index_dir)
+            if index is None:
+                return None
+            if index.doc_id != doc_id:
+                pages = (index.pages_indexed, index.pages_total)
+                index = _rename(index, doc_id)
+                index.pages_indexed, index.pages_total = pages
+            with self._loaded_lock:
+                # KeyError if deleted meanwhile: do not cache a ghost.  ``_ingest`` marks the
+                # record ready *before* it drops the cache entry, so a record still
+                # 'processing' here means that drop has not happened yet.
+                still_processing = self._row(doc_id)[0].status == "processing"
+                if still_processing:
+                    self._partial[doc_id] = (key, time.monotonic(), index)
+        if not still_processing:  # finished while we were building: answer from the final index
+            return self.index(doc_id)
+        return index
+
+    def _cached_partial(self, doc_id: str, key: tuple) -> DocumentIndex | None:
+        with self._loaded_lock:
+            cached = self._partial.get(doc_id)
+        if cached is not None and (
+            cached[0] == key or time.monotonic() - cached[1] < PARTIAL_REBUILD_S
+        ):
+            return cached[2]
+        return None
+
+    def _ask_index(self, doc_id: str) -> DocumentIndex:
+        """The final index of a ready document, else the partial one of a processing document."""
+        rec = self.get(doc_id)
+        if rec.status == "processing":
+            index = self.partial_index(doc_id)
+            if index is not None:
+                return index
+        return self.index(doc_id)  # ValueError if not ready (or it just finished: final index)
+
     # ------------------------------------------------------------------ questions
 
     def ask(
@@ -403,6 +510,7 @@ class Library:
         doc_ids: list[str] | None,
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
+        on_token: Callable[[dict[str, Any]], None] | None = None,
     ) -> Answer:
         question = (question or "").strip()
         if not question:
@@ -413,14 +521,24 @@ class Library:
             doc_ids = [r.doc_id for r in self.list_documents() if r.status == "ready"]
         if not doc_ids:
             raise ValueError("No ready documents to search. Upload a PDF first.")
-        indexes = [self.index(d) for d in doc_ids]
+        indexes = [self._ask_index(d) for d in doc_ids]
+        partial = next((i for i in indexes if i.pages_indexed is not None), None)
         embedder = _Locked(self.pipe.embedder, self.model_lock)
         reranker = self.pipe.reranker
         retriever = HybridRetriever(
             self.config, embedder, _Locked(reranker, self.model_lock) if reranker else None
         )
         agent = AgenticRAG(self.config, retriever, self.pipe.llm)
-        return agent.run(question[:2000], indexes, history=history, on_step=on_step)
+        answer = agent.run(
+            question[:2000], indexes, history=history, on_step=on_step, on_token=on_token
+        )
+        if partial is not None:  # at most one document is being ingested at a time
+            answer.partial = {
+                "doc_id": partial.doc_id,
+                "pages_indexed": partial.pages_indexed,
+                "pages_total": partial.pages_total,
+            }
+        return answer
 
     # ------------------------------------------------------------------ pages
 
@@ -434,18 +552,39 @@ class Library:
         segments = self._highlight_segments(doc_id, page, chunk_id) if chunk_id else []
         with open_pdf(self._pdf_path(doc_id)) as pdf:
             pg = pdf[page - 1]
-            textpage = pg.get_textpage() if segments else None  # extract once, search many
-            for seg in segments:
-                for quad in pg.search_for(seg, quads=True, textpage=textpage):
-                    annot = pg.add_highlight_annot(quad)
-                    annot.set_colors(stroke=(1.0, 0.85, 0.2))
-                    annot.update()
+            for quad in _highlight_quads(pg, segments):
+                annot = pg.add_highlight_annot(quad)
+                annot.set_colors(stroke=(1.0, 0.85, 0.2))
+                annot.update()
             return pg.get_pixmap(matrix=_matrix(zoom), annots=True).tobytes("png")
+
+    def highlight_boxes(self, doc_id: str, page: int, chunk_id: str | None) -> list[list[float]]:
+        """Where ``render_page`` paints the highlight: ``[x0, y0, x1, y1]`` boxes as 0-1
+        fractions of the rendered page, top to bottom. Same segments, same search."""
+        rec = self.get(doc_id)
+        if not 1 <= page <= rec.num_pages:
+            raise IndexError(f"page {page} out of range 1..{rec.num_pages}")
+        segments = self._highlight_segments(doc_id, page, chunk_id) if chunk_id else []
+        if not segments:
+            return []
+        with open_pdf(self._pdf_path(doc_id)) as pdf:
+            pg = pdf[page - 1]
+            width, height = pg.rect.width, pg.rect.height  # rotated size, as rendered
+            boxes = []
+            for quad in _highlight_quads(pg, segments):
+                r = quad.rect * pg.rotation_matrix
+                boxes.append(
+                    [
+                        round(min(max(v, 0.0), 1.0), 4)
+                        for v in (r.x0 / width, r.y0 / height, r.x1 / width, r.y1 / height)
+                    ]
+                )
+        return sorted(boxes, key=lambda b: (b[1], b[0]))
 
     def _highlight_segments(self, doc_id: str, page: int, chunk_id: str) -> list[str]:
         try:
-            index = self.index(doc_id)
-        except (ValueError, FileNotFoundError):
+            index = self._ask_index(doc_id)
+        except (ValueError, FileNotFoundError, KeyError):
             return []
         chunk = next((c for c in index.chunks if c.chunk_id == chunk_id), None)
         if chunk is None or chunk.page != page:
@@ -473,6 +612,13 @@ class Library:
             "documents": len(docs),
             "ready": sum(r.status == "ready" for r in docs),
         }
+
+
+def _highlight_quads(pg, segments: list[str]):
+    """Quads of every segment found on ``pg`` (text extracted once, searched many times)."""
+    textpage = pg.get_textpage() if segments else None
+    for seg in segments:
+        yield from pg.search_for(seg, quads=True, textpage=textpage)
 
 
 def _matrix(zoom: float):

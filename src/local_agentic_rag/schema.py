@@ -63,6 +63,9 @@ class Chunk:
     kind: Literal["text", "table"] = "text"
     n_tokens: int = 0
     doc_title: str = ""
+    #: Number of the numbered section this chunk sits in ("164", "2.1"), lower-cased, or None.
+    #: Set at ingest time (not part of ``embed_text``); unnumbered sub-headings keep it.
+    section_no: str | None = None
 
     @property
     def embed_text(self) -> str:
@@ -75,7 +78,10 @@ class Chunk:
         return f"{header}\n{self.text}" if header else self.text
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        if d["section_no"] is None:  # keep the serialised form of unnumbered chunks unchanged
+            del d["section_no"]
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Chunk:
@@ -160,6 +166,8 @@ class Answer:
     latency_sec: float = 0.0
     raw_response: str = ""
     error: str | None = None
+    #: Set when a document was still being ingested: {"doc_id", "pages_indexed", "pages_total"}.
+    partial: dict[str, Any] | None = None
 
     @property
     def cited_pages(self) -> list[int]:
@@ -175,7 +183,7 @@ class Answer:
         return seen
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "question": self.question,
             "answer": self.answer,
             "refused": self.refused,
@@ -196,3 +204,6 @@ class Answer:
             "raw_response": self.raw_response,
             "error": self.error,
         }
+        if self.partial is not None:  # absent otherwise, so existing consumers see no change
+            out["partial"] = self.partial
+        return out

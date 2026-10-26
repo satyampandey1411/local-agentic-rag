@@ -63,8 +63,11 @@ def safe_filename(raw: str | None) -> str:
 class _Receiver:
     """python-multipart callbacks that route the ``file`` part into a temp file."""
 
-    def __init__(self, max_bytes: int, upload_dir: str | None) -> None:
+    def __init__(
+        self, max_bytes: int, upload_dir: str | None, too_large_detail: str | None = None
+    ) -> None:
         self.max_bytes = max_bytes
+        self.too_large_detail = too_large_detail or _too_large(max_bytes)
         self.upload_dir = upload_dir
         self.fh: BinaryIO | None = None
         self.path: str | None = None
@@ -130,7 +133,7 @@ class _Receiver:
             return
         self.size += len(chunk)
         if self.size > self.max_bytes:
-            self._fail(413, _too_large(self.max_bytes))
+            self._fail(413, self.too_large_detail)
             return
         if not self.magic_ok:
             self.head += chunk[: MAGIC_WINDOW - len(self.head)]
@@ -187,8 +190,16 @@ def _too_large(max_bytes: int) -> str:
     return f"This file is larger than the {max_bytes // (1024 * 1024)} MB upload limit."
 
 
-async def receive_pdf(request: Request, max_bytes: int, upload_dir: str | None) -> ReceivedFile:
+async def receive_pdf(
+    request: Request,
+    max_bytes: int,
+    upload_dir: str | None,
+    too_large_detail: str | None = None,
+) -> ReceivedFile:
     """Stream the ``file`` field of a multipart request into a temp file.
+
+    ``max_bytes`` caps the file whether or not the client declared a Content-Length;
+    ``too_large_detail`` replaces the default 413 message (e.g. when it is a quota).
 
     Raises ``HTTPException`` (400/411/413/415/507) and leaves no temp file behind on
     failure.  On success the caller owns ``ReceivedFile.path``.
@@ -204,9 +215,9 @@ async def receive_pdf(request: Request, max_bytes: int, upload_dir: str | None) 
         except ValueError:
             raise HTTPException(400, "Invalid Content-Length header.") from None
         if declared > max_bytes + _MULTIPART_OVERHEAD:
-            raise HTTPException(413, _too_large(max_bytes))
+            raise HTTPException(413, too_large_detail or _too_large(max_bytes))
 
-    rx = _Receiver(max_bytes, upload_dir)
+    rx = _Receiver(max_bytes, upload_dir, too_large_detail)
     parser = MultipartParser(boundary, rx.callbacks())
     try:
         async for chunk in request.stream():

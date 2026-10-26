@@ -38,6 +38,10 @@ class DocRecord:
     updated_at: float = 0.0
     ingest_seconds: float | None = None
     eta_seconds: float | None = None
+    #: Ask-while-processing: True while the document is still processing but a checkpointed
+    #: prefix can already be searched; ``pages_indexed`` pages are covered by it.
+    askable: bool = False
+    pages_indexed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,12 +64,18 @@ class LibraryProtocol(Protocol):
         doc_ids: list[str] | None,
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
+        on_token: Callable[[dict[str, Any]], None] | None = None,
     ) -> (
         Answer
     ): ...  # blocking, thread-safe; doc_ids None = all ready docs; ValueError if a doc is not ready
     def render_page(
         self, doc_id: str, page: int, zoom: float = 1.5, chunk_id: str | None = None
     ) -> bytes: ...  # PNG; highlights the passage of chunk_id if given; KeyError / IndexError
+    # Highlight boxes [x0, y0, x1, y1] as 0-1 page fractions, top to bottom; [] if none;
+    # KeyError / IndexError. Optional: the server falls back to [] when a library lacks it.
+    def highlight_boxes(
+        self, doc_id: str, page: int, chunk_id: str | None
+    ) -> list[list[float]]: ...
     def page_count(self, doc_id: str) -> int: ...
     def health(
         self,

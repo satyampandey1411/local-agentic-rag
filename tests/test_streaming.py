@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +21,7 @@ from local_agentic_rag.ingest.streaming import (  # noqa: E402
     IngestCancelled,
     ingest_pdf,
     load_index,
+    load_partial_index,
     store_dirs,
 )
 from local_agentic_rag.retrieval.bm25 import BM25Index  # noqa: E402
@@ -199,6 +203,49 @@ def test_onnx_thread_cap_keeps_inference_session_a_class(monkeypatch):
     assert ort.InferenceSession | None is not None
 
 
+CUDA, CPU = "CUDAExecutionProvider", "CPUExecutionProvider"
+
+
+def test_provider_selection_uses_gpu_only_when_asked_and_available():
+    pick = workers.select_onnx_providers
+    assert pick([CPU], True, [CUDA, CPU]) == [CUDA, CPU]
+    assert pick(None, True, [CUDA, CPU]) == [CUDA, CPU]
+    assert pick([CPU], False, [CUDA, CPU]) is None  # flag off: unchanged
+    assert pick([CPU], True, [CPU]) is None  # no CUDA build: unchanged
+    assert pick(["TensorrtExecutionProvider"], True, [CUDA, CPU]) is None  # caller's choice wins
+
+
+def test_gpu_flag_parsing():
+    from local_agentic_rag.config import onnx_gpu_requested
+
+    assert not onnx_gpu_requested({})
+    assert not onnx_gpu_requested({"LOCAL_RAG_ONNX_GPU": "0"})
+    assert onnx_gpu_requested({"LOCAL_RAG_ONNX_GPU": "1"})
+    assert onnx_gpu_requested({"LOCAL_RAG_ONNX_GPU": " True "})
+
+
+def test_gpu_session_failure_falls_back_to_cpu_silently(monkeypatch):
+    ort = pytest.importorskip("onnxruntime")
+    seen: list[list[str] | None] = []
+
+    class FakeSession:
+        def __init__(self, path_or_bytes, sess_options=None, providers=None, **kw):
+            seen.append(providers)
+            if providers and CUDA in providers:
+                raise RuntimeError("CUDA driver not found")
+
+    monkeypatch.setattr(ort, "InferenceSession", FakeSession)
+    monkeypatch.setattr(ort, "get_available_providers", lambda: [CUDA, CPU])
+    workers._limit_onnx_threads(2, use_gpu=True)
+    ort.InferenceSession("model.onnx", providers=[CPU])
+    assert seen == [[CUDA, CPU], [CPU]]  # tried CUDA, then the caller's CPU request
+    seen.clear()
+    monkeypatch.setattr(ort, "InferenceSession", FakeSession)
+    workers._limit_onnx_threads(2, use_gpu=False)
+    ort.InferenceSession("model.onnx", providers=[CPU])
+    assert seen == [[CPU]]
+
+
 def test_checkpoint_without_its_data_file_restarts_cleanly(long_pdf, reference, tmp_path):
     """Power loss can keep state.json but lose a just-created data file: start the pass over."""
     calls = {"n": 0}
@@ -213,3 +260,149 @@ def test_checkpoint_without_its_data_file_restarts_cleanly(long_pdf, reference, 
     (parse_dir / "raw.jsonl").unlink()
     index, _ = ingest_pdf(long_pdf, tmp_path, CFG, FakeEmbedder())
     _same(index, reference[0])
+
+
+# ---------------------------------------------------------------------------
+# Partial index: ask while a document is still being ingested
+# ---------------------------------------------------------------------------
+
+
+def _file_digests(index_dir: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        name: ((index_dir / name).read_bytes(), (index_dir / name).stat().st_mtime_ns)
+        for name in ("chunks.jsonl", "vectors.f16", "state.json")
+    }
+
+
+def test_partial_index_is_none_before_the_first_checkpoint(long_pdf, tmp_path, monkeypatch):
+    assert load_partial_index(tmp_path / "missing") is None
+    monkeypatch.setattr(streaming, "INDEX_BATCH_PAGES", 12)
+    seen = []
+
+    def watch(p):
+        _, index_dir = store_dirs(tmp_path, load_sha(long_pdf), CFG, use_ocr=False)
+        seen.append((p.stage, load_partial_index(index_dir)))
+
+    ingest_pdf(long_pdf, tmp_path, CFG, FakeEmbedder(), progress=watch, workers=1)
+    assert all(idx is None for stage, idx in seen if stage == "reading")  # pass 1 only
+    assert any(idx is not None for stage, idx in seen if stage == "indexing")
+
+
+def test_partial_index_holds_exactly_the_checkpointed_prefix(
+    long_pdf, reference, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(streaming, "INDEX_BATCH_PAGES", 12)
+    ref, snapshots = reference[0], []
+
+    def watch(p):
+        if p.stage != "indexing":
+            return
+        _, index_dir = store_dirs(tmp_path, ref.meta["sha256"], CFG, use_ocr=False)
+        snapshots.append((p.pages_done, load_partial_index(index_dir)))
+
+    ingest_pdf(long_pdf, tmp_path, CFG, FakeEmbedder(), progress=watch, workers=1)
+    assert sorted({pages for pages, _ in snapshots}) == [12, 24, 36, 48, 60]
+    for pages, partial in snapshots:
+        assert partial.pages_indexed == pages and partial.pages_total == N_PAGES
+        n = len(partial)
+        assert n > 0 and max(c.page for c in partial.chunks) <= pages
+        assert [c.to_dict() for c in partial.chunks] == [c.to_dict() for c in ref.chunks[:n]]
+        np.testing.assert_array_equal(partial.embeddings, ref.embeddings[:n])
+        assert partial.bm25.n_docs == n and partial.bm25_search("uniqueterm3", 3)
+        # no chunk beyond the pages covered by the checkpoint
+        assert n == sum(c.page <= pages for c in ref.chunks)
+
+
+def test_partial_load_never_reads_past_the_checkpoint_and_never_writes(
+    long_pdf, reference, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(streaming, "INDEX_BATCH_PAGES", 12)
+    states = []
+
+    def grab(p):
+        if p.stage == "indexing" and p.pages_done == 24:
+            _, d = store_dirs(tmp_path, reference[0].meta["sha256"], CFG, use_ocr=False)
+            states.append(json.loads((d / "state.json").read_text()))
+
+    ingest_pdf(long_pdf, tmp_path, CFG, FakeEmbedder(), progress=grab, workers=1)
+    _, index_dir = store_dirs(tmp_path, reference[0].meta["sha256"], CFG, use_ocr=False)
+    # Rewind state.json to the page-24 checkpoint while the files already hold later batches
+    # (exactly what a reader sees while the writer is mid-batch), plus a torn half record.
+    state = states[0]
+    (index_dir / "state.json").write_text(json.dumps(state))
+    with open(index_dir / "chunks.jsonl", "ab") as f:
+        f.write(b'{"chunk_id": "half-written')
+    with open(index_dir / "vectors.f16", "ab") as f:
+        f.write(b"\x01\x02\x03")
+    before = _file_digests(index_dir)
+    listing = sorted(p.name for p in index_dir.iterdir())
+
+    partial = load_partial_index(index_dir)
+
+    assert partial.pages_indexed == 24 and len(partial) == state["n_chunks"]
+    assert [c.to_dict() for c in partial.chunks] == [
+        c.to_dict() for c in reference[0].chunks[: state["n_chunks"]]
+    ]
+    assert _file_digests(index_dir) == before  # bytes and mtimes: nothing written or truncated
+    assert sorted(p.name for p in index_dir.iterdir()) == listing  # no files created
+
+
+def test_partial_load_rejects_files_that_do_not_back_the_checkpoint(tmp_path):
+    state = {
+        "format": streaming.FORMAT, "doc_id": "d", "title": "T", "num_pages": 5, "pages_done": 3,
+        "n_chunks": 2, "chunk_bytes": 10_000, "vector_bytes": 2 * 4 * 2, "dim": 4, "complete": False,
+    }  # fmt: skip
+    (tmp_path / "state.json").write_text(json.dumps(state))
+    assert load_partial_index(tmp_path) is None  # data files missing
+    (tmp_path / "chunks.jsonl").write_bytes(b"{}\n")
+    (tmp_path / "vectors.f16").write_bytes(b"\0" * 16)
+    assert load_partial_index(tmp_path) is None  # chunks.jsonl shorter than the checkpoint
+
+
+class _SlowEmbedder(FakeEmbedder):
+    def encode_passages(self, texts):
+        time.sleep(0.02)  # keep the writer busy while the reader polls
+        return super().encode_passages(texts)
+
+
+def test_reading_while_the_ingest_thread_appends_is_safe_and_changes_nothing(
+    long_pdf, reference, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(streaming, "INDEX_BATCH_PAGES", 6)
+    ref = reference[0]
+    _, index_dir = store_dirs(tmp_path, ref.meta["sha256"], CFG, use_ocr=False)
+    stop, errors, loads = threading.Event(), [], []
+
+    def reader():
+        last = 0
+        while not stop.is_set():
+            try:
+                idx = load_partial_index(index_dir)
+                if idx is None:
+                    continue
+                n = len(idx)
+                assert [c.to_dict() for c in idx.chunks] == [c.to_dict() for c in ref.chunks[:n]]
+                np.testing.assert_array_equal(idx.embeddings, ref.embeddings[:n])
+                assert idx.pages_indexed >= last
+                last = idx.pages_indexed
+                loads.append(n)
+            except BaseException as exc:  # noqa: BLE001 - reported on the main thread
+                errors.append(exc)
+                return
+
+    t = threading.Thread(target=reader)
+    t.start()
+    try:
+        index, _ = ingest_pdf(long_pdf, tmp_path, CFG, _SlowEmbedder(), workers=1)
+    finally:
+        stop.set()
+        t.join(30)
+    assert not errors, errors
+    assert len(set(loads)) > 2  # the reader really saw the index grow
+    # The finished index is byte-identical to a run nobody queried.
+    _same(index, ref)
+    ref_dir = Path(ref.meta["index_dir"])
+    for name in ("chunks.jsonl", "vectors.f16", "bm25_vocab.json"):
+        assert (index_dir / name).read_bytes() == (ref_dir / name).read_bytes(), name
+    a, b = BM25Index.load(index_dir), BM25Index.load(ref_dir)
+    assert (a._weights != b._weights).nnz == 0 and a.vocab == b.vocab

@@ -9,6 +9,10 @@ Rules (each one fixes a concrete failure of the original prototype or the refere
     * Every chunk remembers its section heading, which is prepended to the
       embedding text (see ``Chunk.embed_text``).
     * Chunks never span pages, so a citation always points to one page.
+    * Every chunk also records the number of the numbered section it sits in
+      (``Chunk.section_no``): the last "§ 164." / "Section 2.1" heading, which unnumbered
+      sub-headings ("(a) General rule", "Editorial Notes") do not displace and which a
+      CHAPTER/PART/ARTICLE-level heading ends.  The number never enters the chunk text.
     * Tables become their own chunks (Markdown), split by rows with the
       header row repeated so each piece is self-describing.
 """
@@ -19,9 +23,13 @@ import re
 from collections.abc import Callable
 
 from local_agentic_rag.schema import Chunk, PageContent, ParsedDocument
+from local_agentic_rag.sections import INLINE_SECTION_RE, STRUCTURAL_HEAD_RE, section_number
 
 TokenCounter = Callable[[str], int]
 
+# INLINE_SECTION_RE for a single unit: sentence splitting can cut right after "§ 164.", leaving
+# the unit ending in the number, so the capital letter that follows may be in the next unit.
+_UNIT_SECTION_RE = re.compile(r"(?:^|\s)§\s*(\d+[A-Za-z]?)\.(?=\s+[A-Z]|$)")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+(?=[A-Z0-9\"'(\[•\-])")
 # "Table 7.", "Table A.3:", "Appendix Table B." — the label that names a table.
 _TABLE_LABEL_RE = re.compile(r"\b(?:Appendix\s+)?Table\s+[A-Z]?(?:\d+(?:\.\d+)*)?(?=[.:]\s)")
@@ -33,18 +41,20 @@ def approx_token_count(text: str) -> int:
 
 
 class _PageBuffer:
-    """Accumulates paragraph units for one page and emits (section, text) chunks."""
+    """Accumulates paragraph units for one page and emits (section, text, section_no) chunks."""
 
     def __init__(self, section: str, min_tokens: int) -> None:
-        self.chunks: list[tuple[str, str]] = []
+        self.chunks: list[tuple[str, str, str | None]] = []
         self.units: list[str] = []
         self.tokens = 0
         self.section = section
+        self.section_no: str | None = None
         self.min_tokens = min_tokens
 
-    def add(self, unit: str, n_tokens: int, section: str) -> None:
+    def add(self, unit: str, n_tokens: int, section: str, section_no: str | None) -> None:
         if not self.units:
             self.section = section
+            self.section_no = section_no
         self.units.append(unit)
         self.tokens += n_tokens
 
@@ -57,12 +67,12 @@ class _PageBuffer:
             self.reset()
             return
         if force or self.tokens >= self.min_tokens or not self.chunks:
-            self.chunks.append((self.section, text))
+            self.chunks.append((self.section, text, self.section_no))
             self.reset()
         elif self.chunks[-1][0] == self.section:
             # Too small to stand alone: append to the previous chunk of the same section.
-            prev_section, prev_text = self.chunks[-1]
-            self.chunks[-1] = (prev_section, f"{prev_text} {text}")
+            prev_section, prev_text, prev_no = self.chunks[-1]
+            self.chunks[-1] = (prev_section, f"{prev_text} {text}", prev_no)
             self.reset()
 
 
@@ -88,8 +98,9 @@ def chunk_document(
 class PageChunker:
     """Chunks pages one at a time, in order.
 
-    The only state carried between pages is the current section heading, so a
-    streaming ingest can checkpoint it (``section``) and resume mid-document.
+    The only state carried between pages is the current section heading and the current
+    section number, so a streaming ingest can checkpoint them (``section``,
+    ``section_no``) and resume mid-document.
     """
 
     def __init__(
@@ -102,11 +113,13 @@ class PageChunker:
         min_chunk_tokens: int = 24,
         count_tokens: TokenCounter = approx_token_count,
         section: str = "",
+        section_no: str | None = None,
     ) -> None:
         self.doc_id, self.doc_title = doc_id, doc_title
         self.chunk_tokens, self.overlap_tokens = chunk_tokens, overlap_tokens
         self.min_chunk_tokens, self.count_tokens = min_chunk_tokens, count_tokens
         self.section = section
+        self.section_no = section_no
 
     def add_page(self, page: PageContent) -> list[Chunk]:
         chunk_tokens, overlap_tokens = self.chunk_tokens, self.overlap_tokens
@@ -114,6 +127,7 @@ class PageChunker:
         chunks: list[Chunk] = []
         section = self.section
         page_section_start = section
+        section_no = page_no_start = self.section_no
         buf = _PageBuffer(section, min_chunk_tokens)
         for block in page.blocks:
             if block.kind == "heading":
@@ -121,22 +135,31 @@ class PageChunker:
                 if buf.units:  # fragment that could not merge: keep it under its own heading
                     buf.flush(force=True)
                 section = block.text.strip()
+                section_no = _heading_section_no(section, section_no)
                 continue
             for unit in _split_units(block.text, chunk_tokens, count_tokens):
                 n = count_tokens(unit)
+                opens = _UNIT_SECTION_RE.match(unit.lstrip())
+                if opens:  # a unit that opens a section belongs to it
+                    section_no = opens.group(1).lower()
                 if buf.units and buf.tokens + n > chunk_tokens:
                     buf.flush(force=True)
                     tail = _overlap_tail(buf.chunks[-1][1], overlap_tokens, count_tokens)
                     if tail and count_tokens(tail) + n <= chunk_tokens:
                         buf.reset([tail], count_tokens(tail))
-                buf.add(unit, n, section)
+                        # The tail only repeats earlier text; the chunk is about its new unit.
+                        buf.section, buf.section_no = section, section_no
+                buf.add(unit, n, section, section_no)
+                for m in _UNIT_SECTION_RE.finditer(unit):  # later units follow the last start
+                    section_no = m.group(1).lower()
         buf.flush()
         buf.flush(force=True)  # a fragment that could not be merged
         self.section = section
+        self.section_no = section_no
 
         # Drop fragments with no real content (stray labels, figure axis ticks).
-        page_chunks = [(sec, text) for sec, text in buf.chunks if count_tokens(text) >= 4]
-        for i, (sec, text) in enumerate(page_chunks):
+        page_chunks = [(sec, text, no) for sec, text, no in buf.chunks if count_tokens(text) >= 4]
+        for i, (sec, text, no) in enumerate(page_chunks):
             chunks.append(
                 Chunk(
                     chunk_id=f"{self.doc_id}-p{page.page}-c{i}",
@@ -147,6 +170,7 @@ class PageChunker:
                     kind="text",
                     n_tokens=count_tokens(text),
                     doc_title=self.doc_title,
+                    section_no=no,
                 )
             )
 
@@ -164,9 +188,27 @@ class PageChunker:
                         kind="table",
                         n_tokens=count_tokens(part),
                         doc_title=self.doc_title,
+                        section_no=page_no_start,
                     )
                 )
         return chunks
+
+
+def _heading_section_no(heading: str, current: str | None) -> str | None:
+    """Section number in force after ``heading``.
+
+    A numbered heading ("§ 164. Taxes", "Section 2.1 Scope") starts that section; a
+    CHAPTER/SUBCHAPTER/PART/ARTICLE/TITLE heading ends the current one (None); any other
+    heading ("(a) General rule", "Editorial Notes") is a sub-heading and keeps it."""
+    number = section_number(heading)
+    if number is not None:
+        return number
+    m = INLINE_SECTION_RE.search(heading)
+    if m:
+        return m.group(1).lower()
+    if STRUCTURAL_HEAD_RE.match(heading):
+        return None
+    return current
 
 
 def _table_section(table: str, inherited: str) -> str:

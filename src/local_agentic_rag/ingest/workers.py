@@ -17,6 +17,7 @@ Protocol: one JSON task per stdin line ``{"path", "start", "stop", "extract_tabl
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -201,25 +202,73 @@ class ParsePool:
         self.close()
 
 
-def _limit_onnx_threads(threads: int) -> None:
-    """Cap ONNX Runtime's threads in this worker.
+CUDA_PROVIDER = "CUDAExecutionProvider"
+CPU_PROVIDER = "CPUExecutionProvider"
+
+
+def select_onnx_providers(
+    requested: list[str] | None, use_gpu: bool, available: list[str]
+) -> list[str] | None:
+    """Execution providers for one ONNX session, or ``None`` to leave the caller's choice.
+
+    The GPU is only used when asked for (``use_gpu``), when ONNX Runtime was built with
+    CUDA, and when the caller named no providers of its own beyond the CPU default
+    (PyMuPDF's layout code passes ``["CPUExecutionProvider"]``).  The CPU provider stays in
+    the list as the fallback for any operator CUDA cannot run.
+    """
+    if not use_gpu or CUDA_PROVIDER not in available:
+        return None
+    if requested not in (None, [CPU_PROVIDER]):
+        return None
+    return [CUDA_PROVIDER, CPU_PROVIDER]
+
+
+def _limit_onnx_threads(threads: int, use_gpu: bool | None = None) -> None:
+    """Cap ONNX Runtime's threads in this worker, and optionally run it on the GPU.
 
     PyMuPDF 2's table finder runs ONNX layout models, and every ONNX session starts one
     thread per core by default.  With several parse workers that oversubscribes the CPU
     (load average 370 measured on 16 cores with 8 workers); each worker gets its share.
+
+    ``use_gpu`` (default: the ``LOCAL_RAG_ONNX_GPU`` flag) asks for the CUDA provider; a
+    session that cannot start with it is rebuilt on the CPU without a message.
     """
-    if threads <= 0:
+    from local_agentic_rag.config import onnx_gpu_requested
+
+    if use_gpu is None:
+        use_gpu = onnx_gpu_requested()
+    if threads <= 0 and not use_gpu:
         return
     try:
         import onnxruntime as ort
     except ImportError:
         return
+    if use_gpu and hasattr(ort, "preload_dlls"):
+        # onnxruntime-gpu >= 1.21 finds CUDA/cuDNN from the nvidia-* pip packages (installed by
+        # the onnxruntime-gpu[cuda,cudnn] extras) only after this call, in every process.
+        # Missing libraries are not an error: the session falls back to the CPU below.
+        with contextlib.suppress(Exception):
+            ort.preload_dlls()
+    try:
+        available = list(ort.get_available_providers())
+    except Exception:
+        available = []
 
     class Limited(ort.InferenceSession):  # a class: PyMuPDF uses it in type expressions
         def __init__(self, path_or_bytes, sess_options=None, **kwargs):
             options = sess_options or ort.SessionOptions()
-            options.intra_op_num_threads = threads
-            options.inter_op_num_threads = 1
+            if threads > 0:
+                options.intra_op_num_threads = threads
+                options.inter_op_num_threads = 1
+            chosen = select_onnx_providers(kwargs.get("providers"), use_gpu, available)
+            if chosen is not None:
+                try:
+                    super().__init__(
+                        path_or_bytes, sess_options=options, **{**kwargs, "providers": chosen}
+                    )
+                    return
+                except Exception:  # no usable GPU or driver: run on the CPU as before
+                    pass
             super().__init__(path_or_bytes, sess_options=options, **kwargs)
 
     ort.InferenceSession = Limited

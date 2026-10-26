@@ -11,9 +11,10 @@ Request flow::
             ◄──SSE progress every change──── GET  /api/documents/{id}/events  (polls library.get)
             ──question──────────────────────► POST /api/ask/stream
                                                  │  AskGate (FIFO, max_concurrent_asks)  ── "queued" events
-                                                 │  worker thread: library.ask(on_step=…) ── "step" events
+                                                 │  worker: library.ask(on_step=…, on_token=…) ── "step" / "token" events
             ◄──"answer" / "error" event──────────┘
             ──page image────────────────────► GET  /api/documents/{id}/pages/{n}.png
+            ──highlight boxes (scroll target)► GET  /api/documents/{id}/pages/{n}/highlight?chunk_id=
 
 Every blocking library call runs off the event loop (sync endpoints run in
 Starlette's thread pool; ``ask`` runs in its own pool), so one slow request never
@@ -26,11 +27,13 @@ import asyncio
 import concurrent.futures
 import contextlib
 import hashlib
+import hmac
 import logging
 import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +58,9 @@ MAX_HISTORY_TURNS = 20
 MAX_HISTORY_CHARS = 8000  # per message; older/longer context is truncated, not rejected
 MAX_DOC_IDS = 500
 TERMINAL = ("ready", "failed")
+
+SESSION_COOKIE = "local_rag_session"
+_PUBLIC_API = ("/api/health",)  # reachable without a token (liveness probes)
 
 _CSP = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; "
@@ -104,6 +110,121 @@ class _SecurityHeaders:
         await self.app(scope, receive, send_wrapper)
 
 
+def _session_value(token: str) -> str:
+    """What the session cookie holds: a keyed hash of the token, never the token itself."""
+    return hmac.new(token.encode(), b"local-rag-session", hashlib.sha256).hexdigest()
+
+
+def _same(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode("utf-8", "replace"), b.encode("utf-8", "replace"))
+
+
+class _TokenAuth:
+    """Pure-ASGI gate: with a token configured, /api/* needs a Bearer header or the session cookie.
+
+    Static files stay public so the page can load and show its login form;
+    ``/api/health`` stays public for liveness probes; ``/api/session`` does its own check.
+    """
+
+    def __init__(self, app: Any, token: str) -> None:
+        self.app = app
+        self.token = token
+        self.cookie_value = _session_value(token)
+
+    def _authorised(self, scope: dict) -> bool:
+        cookies: dict[str, str] = {}
+        for name, value in scope["headers"]:
+            if name == b"authorization":
+                scheme, _, credential = value.decode("latin-1").partition(" ")
+                if scheme.lower() == "bearer" and _same(credential.strip(), self.token):
+                    return True
+            elif name == b"cookie":
+                jar: SimpleCookie = SimpleCookie()
+                try:
+                    jar.load(value.decode("latin-1"))
+                except Exception:  # noqa: BLE001 - malformed Cookie header = no cookie
+                    continue
+                cookies.update({k: m.value for k, m in jar.items()})
+        return _same(cookies.get(SESSION_COOKIE, ""), self.cookie_value)
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        path = scope.get("path", "")  # lifespan scopes have none
+        if (
+            scope["type"] != "http"
+            or not path.startswith("/api/")
+            or path in _PUBLIC_API
+            or path == "/api/session"
+            or self._authorised(scope)
+        ):
+            await self.app(scope, receive, send)
+            return
+        response = JSONResponse(
+            {"detail": "Authentication required. Send the access token."},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        await response(scope, receive, send)
+
+
+class SessionRequest(BaseModel):
+    token: str = Field(..., max_length=1024)
+
+
+class UploadLimiter:
+    """Per-client-IP upload limits: one upload at a time, optional daily byte quota.
+
+    In memory only: counters reset when the server restarts.  The "day" is the UTC
+    calendar day.  Event-loop only (no locks needed: no ``await`` between check and update).
+    """
+
+    def __init__(self, quota_bytes: int | None) -> None:
+        self.quota_bytes = quota_bytes if quota_bytes and quota_bytes > 0 else None
+        self.in_flight: set[str] = set()
+        self._used: dict[str, tuple[str, int]] = {}  # ip -> (utc day, bytes)
+
+    @staticmethod
+    def _today() -> str:
+        return time.strftime("%Y-%m-%d", time.gmtime())
+
+    def used(self, ip: str) -> int:
+        day, n = self._used.get(ip, ("", 0))
+        return n if day == self._today() else 0
+
+    def begin(self, ip: str, declared_bytes: int | None) -> None:
+        """Raise 429 / 413 if this client may not start an upload now; else mark it in flight."""
+        if ip in self.in_flight:
+            raise HTTPException(
+                429,
+                "Another upload from your address is still in progress. Wait for it to finish.",
+                headers={"Retry-After": "10"},
+            )
+        if self.quota_bytes is not None:
+            used = self.used(ip)
+            if used >= self.quota_bytes or used + (declared_bytes or 0) > self.quota_bytes:
+                raise HTTPException(413, self.quota_message())
+        self.in_flight.add(ip)
+
+    def quota_message(self) -> str:
+        return (
+            "Daily upload quota exceeded "
+            f"({(self.quota_bytes or 0) // (1024 * 1024)} MB per address per day). "
+            "Try again tomorrow (UTC)."
+        )
+
+    def remaining(self, ip: str) -> int | None:
+        """Bytes this client may still upload today (None = no quota)."""
+        if self.quota_bytes is None:
+            return None
+        return max(0, self.quota_bytes - self.used(ip))
+
+    def finish(self, ip: str, stored_bytes: int = 0) -> None:
+        self.in_flight.discard(ip)
+        if stored_bytes:
+            today = self._today()
+            self._used = {k: v for k, v in self._used.items() if v[0] == today}
+            self._used[ip] = (today, self.used(ip) + stored_bytes)
+
+
 def create_app(
     library: LibraryProtocol,
     *,
@@ -113,14 +234,19 @@ def create_app(
     upload_dir: str | None = None,
     events_poll_s: float = 1.0,
     heartbeat_s: float = 15.0,
+    token: str | None = None,
+    upload_quota_bytes: int | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
     ``upload_dir`` is where uploads are streamed before ``library.submit`` moves
     them; put it on the same filesystem as the library so the move is a rename
     (default: the system temp dir).  ``events_poll_s`` / ``heartbeat_s`` are
-    exposed for tests.
+    exposed for tests.  ``token`` (None = no auth) gates every ``/api`` route but
+    ``/api/health``; ``upload_quota_bytes`` is the per-IP daily upload quota (None = off).
     """
+    token = token or None
+    limiter = UploadLimiter(upload_quota_bytes)
     max_bytes = int(max_upload_mb) * 1024 * 1024
     if upload_dir:
         os.makedirs(upload_dir, exist_ok=True)
@@ -157,7 +283,13 @@ def create_app(
         description="Chat with your PDFs, locally. Answers cite the pages they come from.",
         version="0.1.0",
         lifespan=lifespan,
+        # The API docs are served outside /api, so the token check would not cover them.
+        docs_url=None if token else "/docs",
+        redoc_url=None if token else "/redoc",
+        openapi_url=None if token else "/openapi.json",
     )
+    if token:
+        app.add_middleware(_TokenAuth, token=token)  # added first = inside the header middleware
     app.add_middleware(_SecurityHeaders)
     app.state.library = library
 
@@ -194,14 +326,29 @@ def create_app(
 
     @app.post("/api/documents", status_code=201)
     async def upload_document(request: Request) -> JSONBody:
-        received = await receive_pdf(request, max_bytes, upload_dir)
+        ip = request.client.host if request.client else "unknown"
+        declared = request.headers.get("content-length", "")
+        limiter.begin(ip, int(declared) if declared.isdigit() else None)
+        stored = 0
         try:
-            record = await run_in_threadpool(library.submit, received.path, received.filename)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc) or "The PDF could not be added.") from None
-        except BaseException:
-            Path(received.path).unlink(missing_ok=True)
-            raise
+            # The quota also caps what is read, so a chunked upload cannot exceed it.
+            limit, detail = max_bytes, None
+            left = limiter.remaining(ip)
+            if left is not None and left < max_bytes:
+                limit, detail = left, limiter.quota_message()
+            received = await receive_pdf(request, limit, upload_dir, detail)
+            try:
+                submitted_at = time.time()
+                record = await run_in_threadpool(library.submit, received.path, received.filename)
+                if record.created_at >= submitted_at:  # a duplicate returns the older record
+                    stored = received.size
+            except ValueError as exc:
+                raise HTTPException(400, str(exc) or "The PDF could not be added.") from None
+            except BaseException:
+                Path(received.path).unlink(missing_ok=True)
+                raise
+        finally:
+            limiter.finish(ip, stored)
         return JSONBody(record.to_dict(), status_code=201)
 
     @app.get("/api/documents")
@@ -289,6 +436,28 @@ def create_app(
             raise HTTPException(404, f"Page {page} does not exist in this document.") from None
         return Response(png, media_type="image/png", headers=headers)
 
+    @app.get("/api/documents/{doc_id}/pages/{page}/highlight")
+    def page_highlight(
+        doc_id: str,
+        page: int,
+        chunk_id: str | None = Query(None, max_length=512),
+    ) -> Response:
+        """Boxes (0-1 page fractions) of the highlight ``pages/{page}.png?chunk_id=`` paints."""
+        record = _record(doc_id)
+        if page < 1 or (record.num_pages and page > record.num_pages):
+            raise HTTPException(404, f"Page {page} does not exist in this document.")
+        boxes: list[list[float]] = []
+        finder = getattr(library, "highlight_boxes", None)  # optional on older libraries
+        if chunk_id and finder is not None:
+            try:
+                boxes = finder(doc_id, page, chunk_id)
+            except KeyError:
+                raise HTTPException(404, "Document not found.") from None
+            except IndexError:
+                raise HTTPException(404, f"Page {page} does not exist in this document.") from None
+        headers = {"Cache-Control": "private, max-age=86400"}
+        return JSONResponse({"boxes": boxes}, headers=headers)
+
     # ------------------------------------------------------------------ asking
 
     def _validate(body: AskRequest) -> tuple[str, list[str] | None, list[tuple[str, str]]]:
@@ -325,8 +494,10 @@ def create_app(
             return
         for doc_id in doc_ids:
             record = _record(doc_id)
-            if record.status != "ready":
-                raise HTTPException(409, f"'{record.title}' is not ready yet ({record.status}).")
+            # A processing document with a checkpointed prefix can be asked (partial answer).
+            if record.status == "ready" or (record.status == "processing" and record.askable):
+                continue
+            raise HTTPException(409, f"'{record.title}' is not ready yet ({record.status}).")
 
     def _ask_error(exc: BaseException) -> tuple[int, str]:
         if isinstance(exc, ValueError):
@@ -419,7 +590,7 @@ def create_app(
                 raise
             yield sse.event("started", {"queue_wait_s": round(queue_wait, 3)})
             deadline = time.monotonic() + ask_timeout_s
-            getter: asyncio.Future[dict[str, Any]] | None = None
+            getter: asyncio.Future[tuple[str, dict[str, Any]]] | None = None
             try:
                 while not job.future.done():
                     remaining = deadline - time.monotonic()
@@ -432,22 +603,28 @@ def create_app(
                         )
                         return
                     if getter is None:
-                        getter = asyncio.ensure_future(job.steps.get())
+                        getter = asyncio.ensure_future(job.events.get())
                     done, _ = await asyncio.wait(
                         {getter, job.future},
                         timeout=min(remaining, heartbeat_s),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if getter in done:
-                        yield sse.event("step", getter.result())
+                        name, payload = getter.result()
+                        yield sse.event(name, payload)
                         getter = None
                     elif not done:
                         yield sse.comment()
             finally:
                 if getter is not None and not getter.done():
                     getter.cancel()
-            while not job.steps.empty():  # steps scheduled just before the thread returned
-                yield sse.event("step", job.steps.get_nowait())
+            if getter is not None and getter.done() and not getter.cancelled():
+                name, payload = getter.result()  # fetched but not yet sent
+                yield sse.event(name, payload)
+            job.flush_tokens()
+            while not job.events.empty():  # events scheduled just before the thread returned
+                name, payload = job.events.get_nowait()
+                yield sse.event(name, payload)
             exc = job.future.exception()
             if exc is not None:
                 status, detail = _ask_error(exc)
@@ -477,6 +654,34 @@ def create_app(
             "max_question_chars": MAX_QUESTION_CHARS,
         }
         return JSONBody(info)
+
+    # ------------------------------------------------------------------ session (token mode)
+
+    if token:
+        cookie_value = _session_value(token)
+
+        @app.post("/api/session")
+        async def login(body: SessionRequest, request: Request) -> Response:
+            if not _same(body.token, token):
+                raise HTTPException(
+                    401, "Wrong access token.", headers={"WWW-Authenticate": "Bearer"}
+                )
+            secure = (
+                request.url.scheme == "https"
+                or request.headers.get("x-forwarded-proto", "").lower() == "https"
+            )
+            response = Response(status_code=204)
+            # Session cookie (no Max-Age): gone when the browser closes.
+            response.set_cookie(
+                SESSION_COOKIE, cookie_value, httponly=True, samesite="strict", secure=secure
+            )
+            return response
+
+        @app.delete("/api/session", status_code=204)
+        async def logout() -> Response:
+            response = Response(status_code=204)
+            response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict")
+            return response
 
     # ------------------------------------------------------------------ frontend
 

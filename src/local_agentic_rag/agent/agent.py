@@ -48,7 +48,7 @@ from collections.abc import Callable
 from typing import Any
 
 from local_agentic_rag import lang
-from local_agentic_rag.agent import calculator
+from local_agentic_rag.agent import calculator, presupposition
 from local_agentic_rag.agent import prompts as P
 from local_agentic_rag.agent.citations import (
     build_citations,
@@ -56,9 +56,10 @@ from local_agentic_rag.agent.citations import (
     is_refusal,
     strip_invalid_markers,
     strip_trailing_sentinel,
+    table_reference_suffix,
 )
 from local_agentic_rag.config import RAGConfig
-from local_agentic_rag.llm.base import LLM, LLMError, LLMOutputError
+from local_agentic_rag.llm.base import LLM, LLMError, LLMOutputError, LLMTimeoutError
 from local_agentic_rag.retrieval.hybrid import HybridRetriever
 from local_agentic_rag.retrieval.index import DocumentIndex
 from local_agentic_rag.schema import REFUSAL_MESSAGE, Answer, ScoredChunk, TraceStep
@@ -82,10 +83,19 @@ class AgenticRAG:
         indexes: list[DocumentIndex],
         history: History | None = None,
         on_step: Callable[[TraceStep], None] | None = None,
+        on_token: Callable[[dict[str, Any]], None] | None = None,
     ) -> Answer:
+        """Answer ``question``.
+
+        ``on_token`` receives live answer text: ``{"reset": True}`` when a free-text answer
+        generation starts (so a UI clears what an earlier generation showed), then
+        ``{"text": piece}`` per streamed piece.  Only answer generations stream, never the
+        JSON steps; citations and verification still run on the full text afterwards.
+        """
         t0 = time.perf_counter()
         ans = Answer(question=question, answer="", refused=False)
         self._on_step = on_step
+        self._on_token = on_token
         try:
             if self.config.agentic and self.config.agent_mode == "adaptive":
                 self._run_adaptive(ans, indexes, history)
@@ -101,8 +111,68 @@ class AgenticRAG:
             logger.exception("Agent failure")
             ans.error = f"{type(exc).__name__}: {exc}"
             ans.answer = "An internal error occurred while answering this question."
+        self._presupposition_gate(ans)
+        self._name_cited_table(ans)
         ans.latency_sec = time.perf_counter() - t0
         return ans
+
+    def _presupposition_gate(self, ans: Answer) -> None:
+        """F11 (``RAGConfig.presupposition_check``, off by default): refuse a question whose
+        year, proper-noun phrase or code is in none of the retrieved passages.
+
+        Deliberately narrow: only when the flag is on, the verifier ran and did NOT find the
+        answer supported (``grounded is False``; a missing verdict or a supported one never
+        qualifies), and the answer is not already a refusal.  See ``agent.presupposition``.
+        """
+        if not self.config.presupposition_check:
+            return
+        if ans.refused or ans.error or ans.grounded is not False or not ans.retrieved:
+            return
+        try:
+            missing = presupposition.find_missing_presupposition(
+                ans.question, (sc.chunk.text for sc in ans.retrieved)
+            )
+            if missing is None:
+                return
+            unsupported = ans.unsupported_claims
+            ans.refused = True
+            ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
+            ans.citations = []
+            # A refusal has no verdict (as after "no passages retrieved") and no claims.
+            ans.grounded, ans.unsupported_claims = None, []
+            self._record(
+                ans,
+                "presupposition_refusal",
+                {
+                    "entity": missing.text,
+                    "kind": missing.kind,
+                    "unsupported": unsupported,
+                },
+                0.0,
+            )
+        except Exception:  # an optional gate must never lose the answer
+            logger.debug("presupposition gate failed", exc_info=True)
+
+    def _name_cited_table(self, ans: Answer) -> None:
+        """ "Which table ...?" answers: append the cited table's printed number if missing.
+
+        Runs after the mode has finished (so verification and escalation never see it) and
+        only for a non-refused, error-free answer to a question that asks which
+        table/figure/exhibit.  Deterministic; see ``citations.table_reference_suffix``.
+        """
+        if ans.refused or ans.error or not ans.answer or not ans.citations:
+            return
+        try:
+            asked = ans.question
+            if ans.standalone_question and ans.standalone_question != ans.question:
+                asked = f"{ans.question}\n{ans.standalone_question}"
+            found = table_reference_suffix(asked, ans.answer, ans.citations, ans.retrieved)
+            if found:
+                suffix, detail = found
+                ans.answer = ans.answer.rstrip() + suffix
+                self._record(ans, "table_reference_added", detail, 0.0)
+        except Exception:  # an optional nicety must never lose the answer
+            logger.debug("table reference step failed", exc_info=True)
 
     # ------------------------------------------------------------------ modes
 
@@ -565,9 +635,13 @@ class AgenticRAG:
 
         def call() -> str:
             ans.llm_calls += 1
-            return self.llm.chat(
-                msgs, max_tokens=self.config.max_answer_tokens, temperature=self.config.temperature
-            )
+            if getattr(self, "_on_token", None) is None:
+                return self.llm.chat(
+                    msgs,
+                    max_tokens=self.config.max_answer_tokens,
+                    temperature=self.config.temperature,
+                )
+            return self._stream_answer(msgs)
 
         raw = self._step(ans, "generate", call)
         ans.raw_response = raw
@@ -586,6 +660,43 @@ class AgenticRAG:
                 self._record(ans, "infer_citations", {"pages": [c.page for c in citations]}, 0.0)
         ans.answer = text
         ans.citations = citations
+
+    def _stream_answer(self, msgs: list[dict[str, str]]) -> str:
+        """Run one free-text generation through ``chat_stream``, forwarding pieces to the UI.
+
+        The joined pieces are stripped, matching what ``chat`` returns, so everything after
+        this point (refusal check, citations, verification) sees identical text.
+        """
+        self._emit_token({"reset": True})
+        parts: list[str] = []
+        try:
+            for piece in self.llm.chat_stream(
+                msgs, max_tokens=self.config.max_answer_tokens, temperature=self.config.temperature
+            ):
+                if piece:
+                    parts.append(piece)
+                    self._emit_token({"text": piece})
+        except LLMTimeoutError:
+            raise  # chat() never retries a read timeout either; a second wait is pointless
+        except LLMError as exc:
+            # A stream that breaks part-way (e.g. the runner was restarted) cannot be
+            # resumed; fall back to the non-streaming call, which has its own retries, and
+            # tell the UI to drop the partial text.
+            logger.warning("answer stream failed, retrying without streaming: %s", exc)
+            self._emit_token({"reset": True})
+            text = self.llm.chat(
+                msgs, max_tokens=self.config.max_answer_tokens, temperature=self.config.temperature
+            )
+            if text:
+                self._emit_token({"text": text})
+            return text
+        return "".join(parts).strip()
+
+    def _emit_token(self, event: dict[str, Any]) -> None:
+        try:
+            self._on_token(event)
+        except Exception:  # UI callbacks must never break answering
+            logger.debug("on_token callback failed", exc_info=True)
 
     # ------------------------------------------------------------------ plumbing
 

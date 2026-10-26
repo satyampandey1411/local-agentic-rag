@@ -21,7 +21,22 @@ from typing import Any, Literal
 RetrievalMode = Literal["dense", "bm25", "hybrid"]
 
 #: Bump whenever parsing/chunking code changes output, so cached indexes are rebuilt.
-INGEST_VERSION = "2026.10.26-9"  # streaming store, line-level header stripping, OCR of garbled text
+INGEST_VERSION = "2026.10.26-11"  # ... + overlap-seeded chunks take the section number of their new text
+
+#: Environment flag: run PyMuPDF's table-layout ONNX model on the GPU in the parse workers
+#: (needs ``onnxruntime-gpu`` and CUDA; falls back to the CPU silently).  Off by default
+#: because GPU arithmetic can differ from the CPU's in the last bits, which could move a
+#: table box on a borderline page.  ``INGEST_VERSION`` is not bumped: nothing changes unless
+#: the flag is switched on, and chunk identity must then be checked on that machine.
+ONNX_GPU_ENV = "LOCAL_RAG_ONNX_GPU"
+
+
+def onnx_gpu_requested(environ: Any = None) -> bool:
+    """True when ``LOCAL_RAG_ONNX_GPU`` is set to a truthy value (1, true, yes, on)."""
+    import os
+
+    env = os.environ if environ is None else environ
+    return str(env.get(ONNX_GPU_ENV, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -61,6 +76,10 @@ class RAGConfig:
     max_answer_attempts: int = 2  # generation + one regeneration on failed verification
     grader_override_score: float = 0.2  # keep grader-rejected passages above this reranker score
     history_turns: int = 3  # chat turns used to condense follow-ups
+    # F11 (experimental): after the answer is final, if the verifier did NOT support it and the
+    # question names a year / proper-noun phrase / code found in none of the retrieved
+    # passages, replace the answer with the standard refusal (agent/presupposition.py).
+    presupposition_check: bool = False
 
     # --- Generation ------------------------------------------------------
     temperature: float = 0.0
@@ -128,6 +147,8 @@ PRESETS: dict[str, dict[str, Any]] = {
     "agentic": {},
     # Always-on agent loop, kept for the ablation.
     "agentic_full": {"agent_mode": "full"},
+    # Adaptive agent + the F11 presupposition gate (flag off in every other preset).
+    "agentic_presup": {"presupposition_check": True},
 }
 
 

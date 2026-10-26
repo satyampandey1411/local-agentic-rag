@@ -34,6 +34,8 @@ class FakeLibrary:
       block until ``release`` is set; ``boom`` raises; ``refuse`` returns a refusal.
     """
 
+    ANSWER = "Revenue grew 4% [1]."
+
     def __init__(self, store: Path) -> None:
         self.store = store
         self.lock = threading.Lock()
@@ -54,6 +56,21 @@ class FakeLibrary:
             num_pages=pages,
             pages_done=pages,
             num_chunks=40,
+            created_at=time.time(),
+        )
+
+    def add_processing(
+        self, doc_id: str, *, askable: bool, pages_indexed: int = 0, pages: int = 100
+    ) -> None:
+        self.docs[doc_id] = DocRecord(
+            doc_id=doc_id,
+            title=f"Processing {doc_id}",
+            filename=f"{doc_id}.pdf",
+            status="processing",
+            num_pages=pages,
+            pages_done=pages // 2,
+            askable=askable,
+            pages_indexed=pages_indexed,
             created_at=time.time(),
         )
 
@@ -116,7 +133,7 @@ class FakeLibrary:
             rec.filename = rec.filename.replace("bad", "ok")
             return replace(rec)
 
-    def ask(self, question, doc_ids, history, on_step=None) -> Answer:
+    def ask(self, question, doc_ids, history, on_step=None, on_token=None) -> Answer:
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -130,6 +147,10 @@ class FakeLibrary:
                 time.sleep(0.15)
             ans = Answer(question=question, answer="", refused=False)
             for name in ("plan", "retrieve", "generate", "verify"):
+                if name == "generate" and on_token and "refuse" not in question:
+                    on_token({"reset": True})
+                    for i in range(0, len(self.ANSWER), 4):  # many tiny pieces, like a model
+                        on_token({"text": self.ANSWER[i : i + 4]})
                 step = TraceStep(
                     step=name, detail={"pages": [3]} if name == "retrieve" else {}, seconds=0.01
                 )
@@ -141,7 +162,7 @@ class FakeLibrary:
                 return ans
             doc = (doc_ids or ["d1"])[0]
             chunk = Chunk(chunk_id=f"{doc}-c1", doc_id=doc, page=3, section="", text="Revenue")
-            ans.answer = "Revenue grew 4% [1]."
+            ans.answer = self.ANSWER
             ans.citations = [
                 Citation(
                     marker=1, chunk_id=chunk.chunk_id, doc_id=doc, page=3, snippet="Revenue grew"
@@ -151,6 +172,13 @@ class FakeLibrary:
                 ScoredChunk(chunk=chunk, score=float("nan"))
             ]  # NaN must not break JSON
             ans.grounded = True
+            rec = self.docs.get(doc)
+            if rec is not None and rec.status == "processing":
+                ans.partial = {
+                    "doc_id": doc,
+                    "pages_indexed": rec.pages_indexed,
+                    "pages_total": rec.num_pages,
+                }
             return ans
         finally:
             with self.lock:
@@ -161,6 +189,12 @@ class FakeLibrary:
         if not 1 <= page <= rec.num_pages:
             raise IndexError(page)
         return b"\x89PNG\r\n\x1a\n" + f"{doc_id}:{page}:{zoom}:{chunk_id}".encode()
+
+    def highlight_boxes(self, doc_id, page, chunk_id):
+        rec = self.get(doc_id)
+        if not 1 <= page <= rec.num_pages:
+            raise IndexError(page)
+        return [[0.1, 0.4, 0.9, 0.45], [0.1, 0.46, 0.5, 0.5]] if chunk_id else []
 
     def page_count(self, doc_id: str) -> int:
         return self.get(doc_id).num_pages
@@ -421,6 +455,37 @@ def test_page_errors(client) -> None:
     assert client.get("/api/documents/d1/pages/abc.png").status_code == 422
 
 
+def test_page_highlight_boxes(client) -> None:
+    r = client.get("/api/documents/d1/pages/3/highlight", params={"chunk_id": "d1-c1"})
+    assert r.status_code == 200 and "max-age" in r.headers["cache-control"]
+    boxes = r.json()["boxes"]
+    assert boxes and all(len(b) == 4 and all(0 <= v <= 1 for v in b) for b in boxes)
+
+
+def test_page_highlight_without_chunk_id_is_empty(client) -> None:
+    r = client.get("/api/documents/d1/pages/3/highlight")
+    assert r.status_code == 200 and r.json() == {"boxes": []}
+
+
+def test_page_highlight_errors(client) -> None:
+    for url in (
+        "/api/documents/nope/pages/1/highlight",
+        "/api/documents/d1/pages/11/highlight",
+        "/api/documents/d1/pages/0/highlight",
+    ):
+        assert client.get(url, params={"chunk_id": "c"}).status_code == 404
+    assert client.get("/api/documents/d1/pages/abc/highlight").status_code == 422
+    r = client.get("/api/documents/d1/pages/1/highlight", params={"chunk_id": "x" * 513})
+    assert r.status_code == 422 and isinstance(r.json()["detail"], str)
+
+
+def test_page_highlight_falls_back_for_libraries_without_it(lib, tmp_path, monkeypatch) -> None:
+    monkeypatch.delattr(FakeLibrary, "highlight_boxes")
+    with make_client(lib, tmp_path) as c:
+        r = c.get("/api/documents/d1/pages/1/highlight", params={"chunk_id": "d1-c1"})
+    assert r.status_code == 200 and r.json() == {"boxes": []}
+
+
 # ============================================================================ asking
 
 
@@ -480,7 +545,7 @@ def test_ask_stream_emits_queued_steps_answer(client) -> None:
     r = client.post("/api/ask/stream", json={"question": "revenue?", "doc_ids": ["d1"]})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(r.text)
-    names = [n for n, _ in events]
+    names = [n for n, _ in events if n != "token"]
     assert names == ["queued", "started", "step", "step", "step", "step", "answer"]
     assert events[0][1]["position"] == 0
     assert [d["step"] for n, d in events if n == "step"] == [
@@ -489,7 +554,8 @@ def test_ask_stream_emits_queued_steps_answer(client) -> None:
         "generate",
         "verify",
     ]
-    assert events[2][1]["detail"] == {} and events[3][1]["detail"] == {"pages": [3]}
+    steps = [d for n, d in events if n == "step"]
+    assert steps[0]["detail"] == {} and steps[1]["detail"] == {"pages": [3]}
     answer = events[-1][1]
     assert answer["grounded"] is True and "queue_wait_s" in answer
     assert len(answer["trace"]) == 4
@@ -579,6 +645,277 @@ def test_frontend_is_served(client) -> None:
     assert "innerHTML" not in client.get("/app.js").text.split("*/", 1)[1]
 
 
+def test_frontend_accessibility_and_phone_hooks(client) -> None:
+    """Static guards (no browser here): the pieces the keyboard/phone behaviour relies on."""
+    js, css = client.get("/app.js").text, client.get("/styles.css").text
+    assert "type: 'button', className: `chip" in js  # chips are real buttons: Tab, Enter, Space
+    assert "/highlight?chunk_id=" in js and "prefers-reduced-motion" in js and "scrollTo" in js
+    assert "aria-busy" in js and 'aria-live="polite"' in client.get("/").text
+    assert ".page-stage:focus-visible" in css and ".chip:focus-visible" in css
+    phone = css.split("@media (max-width: 819px)", 1)[1].split("@media", 1)[0]
+    assert 'body[data-view="viewer"] .viewer { display: flex; }' in phone
+    assert "#viewer-close { display: none; }" not in phone  # the drawer can be closed on phones
+    assert "100dvh" in phone  # composer stays within the visible area
+
+
 def test_unknown_api_route_is_json_404(client) -> None:
     r = client.get("/api/nothing/here")
     assert r.status_code == 404 and r.json()["detail"].startswith("No such API endpoint")
+
+
+# ============================================================================ token streaming
+
+
+def test_stream_sequence_queued_started_tokens_answer(client) -> None:
+    r = client.post("/api/ask/stream", json={"question": "revenue?", "doc_ids": ["d1"]})
+    events = parse_sse(r.text)
+    names = [n for n, _ in events]
+    assert names[:2] == ["queued", "started"] and names[-1] == "answer"
+    assert names.count("token") >= 2  # the reset marker plus at least one batch of text
+    assert names.index("token") < names.index("answer")
+    # tokens belong to the generation, so they arrive after retrieval and before verification
+    first_token = names.index("token")
+    steps_before = [d["step"] for n, d in events[:first_token] if n == "step"]
+    assert steps_before == ["plan", "retrieve"]
+    tokens = [d for n, d in events if n == "token"]
+    assert tokens[0] == {"text": "", "reset": True}
+    assert all(set(t) == {"text", "reset"} for t in tokens)
+    streamed = "".join(t["text"] for t in tokens)
+    assert streamed == FakeLibrary.ANSWER == events[-1][1]["answer"]
+
+
+def test_stream_batches_tiny_tokens(client) -> None:
+    events = parse_sse(client.post("/api/ask/stream", json={"question": "revenue?"}).text)
+    pieces = [d for n, d in events if n == "token" and not d["reset"]]
+    # FakeLibrary emits 5 pieces of 4 characters back to back; they must be merged
+    assert 1 <= len(pieces) < 5
+    assert "".join(p["text"] for p in pieces) == FakeLibrary.ANSWER
+
+
+def test_stream_final_answer_equals_plain_ask(client) -> None:
+    body = {"question": "revenue?", "doc_ids": ["d1"]}
+    plain = client.post("/api/ask", json=body).json()
+    events = parse_sse(client.post("/api/ask/stream", json=body).text)
+    final = events[-1][1]
+    for key in ("answer", "citations", "refused", "grounded", "cited_pages", "trace"):
+        assert final[key] == plain[key], key
+
+
+def test_stream_refusal_has_no_tokens(client) -> None:
+    events = parse_sse(client.post("/api/ask/stream", json={"question": "refuse"}).text)
+    assert not any(n == "token" for n, _ in events) and events[-1][1]["refused"] is True
+
+
+def test_library_without_on_token_still_streams_steps(lib, tmp_path) -> None:
+    """A LibraryProtocol written before token streaming (no ``on_token``) keeps working."""
+
+    class Legacy(FakeLibrary):
+        def ask(self, question, doc_ids, history, on_step=None) -> Answer:
+            return super().ask(question, doc_ids, history, on_step)
+
+    old = Legacy(lib.store)
+    old.add_ready("d1")
+    with make_client(old, tmp_path) as c:
+        events = parse_sse(c.post("/api/ask/stream", json={"question": "revenue?"}).text)
+    assert [n for n, _ in events if n == "token"] == [] and events[-1][0] == "answer"
+
+
+def test_real_library_stream_matches_plain_ask(tmp_path) -> None:
+    """End to end with the real Library + agent + scripted LLM: streamed == non-streamed."""
+    pytest.importorskip("pymupdf")
+    pytest.importorskip("reportlab")
+    from local_agentic_rag.library import Library
+    from tests.helpers import make_text_pdf
+    from tests.test_library import _pipe, _wait
+
+    src = tmp_path / "src.pdf"
+    make_text_pdf(src, n_pages=30)
+    library = Library(tmp_path / "lib", pipeline=_pipe())
+    try:
+        rec = library.submit(str(src), "Annual Report 2025.pdf")
+        _wait(library, rec.doc_id)
+        with TestClient(
+            create_app(library, upload_dir=str(tmp_path / "in"), heartbeat_s=0.05)
+        ) as c:
+            body = {"question": "Where is uniqueterm3?", "doc_ids": [rec.doc_id]}
+            plain = c.post("/api/ask", json=body).json()
+            events = parse_sse(c.post("/api/ask/stream", json=body).text)
+        names = [n for n, _ in events]
+        assert names[:2] == ["queued", "started"] and names[-1] == "answer"
+        assert "token" in names and names.index("token") < names.index("answer")
+        final = events[-1][1]
+        assert final["answer"] == plain["answer"] and final["cited_pages"] == plain["cited_pages"]
+        generated = "".join(d["text"] for n, d in events if n == "token")
+        assert generated.strip() == final["answer"] == plain["answer"]
+        # only the free-text generation streams: plan/grade/verify JSON never reaches the UI
+        assert "{" not in generated
+    finally:
+        library.close()
+
+
+def _asgi_call(app, method: str, path: str, body: bytes = b"", *, disconnect_on: bytes = b""):
+    """Drive the ASGI app by hand (TestClient cannot hang up mid-response).
+
+    Returns the list of body chunks seen.  When ``disconnect_on`` is set the client
+    "closes the connection" as soon as a chunk containing it is sent.
+    """
+    import asyncio
+
+    async def run() -> list[bytes]:
+        chunks: list[bytes] = []
+        hung_up = asyncio.Event()
+        sent_request = False
+
+        async def receive():
+            nonlocal sent_request
+            if not sent_request:
+                sent_request = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await hung_up.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                chunk = message.get("body", b"")
+                chunks.append(chunk)
+                if disconnect_on and disconnect_on in chunk:
+                    hung_up.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"test"),
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "client": ("127.0.0.1", 5000),
+            "server": ("test", 80),
+        }
+        await asyncio.wait_for(app(scope, receive, send), timeout=10)
+        return chunks
+
+    return run
+
+
+def test_client_disconnect_mid_stream_releases_gate_slot(lib, tmp_path) -> None:
+    import asyncio
+
+    app = create_app(
+        lib, upload_dir=str(tmp_path / "incoming"), max_concurrent_asks=1, heartbeat_s=0.05
+    )
+    ask = json.dumps({"question": "slow hang up", "doc_ids": ["d1"]}).encode()
+
+    async def scenario() -> tuple[int, int, bool]:
+        # 1. the browser hangs up as soon as the answer starts (the worker is still running)
+        await _asgi_call(app, "POST", "/api/ask/stream", ask, disconnect_on=b"event: started")()
+        during = json.loads(b"".join(await _asgi_call(app, "GET", "/api/health")()))
+        # 2. the thread finishes later: only then is the slot free again
+        lib.release.set()
+        for _ in range(200):
+            health = json.loads(b"".join(await _asgi_call(app, "GET", "/api/health")()))
+            if health["server"]["asks_active"] == 0:
+                break
+            await asyncio.sleep(0.02)
+        # 3. a new user is served immediately
+        chunks = await _asgi_call(app, "POST", "/api/ask/stream", ask)()
+        return (
+            during["server"]["asks_active"],
+            health["server"]["asks_active"],
+            (b"event: answer" in b"".join(chunks)),
+        )
+
+    held, after, served = asyncio.run(scenario())
+    assert held == 1  # a disconnect never frees the GPU slot while the thread still runs
+    assert after == 0  # ...and it is released when the thread ends
+    assert served is True
+    assert lib.max_active == 1
+
+
+# ============================================================================ ask while processing
+
+
+def test_document_records_carry_the_askable_fields(lib, client) -> None:
+    lib.add_processing("p1", askable=True, pages_indexed=12)
+    docs = {d["doc_id"]: d for d in client.get("/api/documents").json()["documents"]}
+    assert docs["p1"]["askable"] is True and docs["p1"]["pages_indexed"] == 12
+    assert docs["d1"]["askable"] is False
+    assert client.get("/api/documents/p1").json()["askable"] is True
+
+
+def test_processing_document_with_a_partial_index_can_be_asked(lib, client) -> None:
+    lib.add_processing("p1", askable=True, pages_indexed=12, pages=100)
+    r = client.post("/api/ask", json={"question": "What grew?", "doc_ids": ["p1"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["partial"] == {"doc_id": "p1", "pages_indexed": 12, "pages_total": 100}
+    assert lib.asks[-1]["doc_ids"] == ["p1"]
+
+    r = client.post("/api/ask/stream", json={"question": "What grew?", "doc_ids": ["p1"]})
+    assert r.status_code == 200, r.text
+    answer = [data for name, data in parse_sse(r.text) if name == "answer"][0]
+    assert answer["partial"] == {"doc_id": "p1", "pages_indexed": 12, "pages_total": 100}
+    assert any(name == "token" for name, _ in parse_sse(r.text))  # streaming still works
+
+
+def test_mixed_selection_of_ready_and_partial_documents(lib, client) -> None:
+    lib.add_processing("p1", askable=True, pages_indexed=12)
+    r = client.post("/api/ask", json={"question": "What grew?", "doc_ids": ["p1", "d1"]})
+    assert r.status_code == 200 and r.json()["partial"]["pages_indexed"] == 12
+
+
+def test_ready_answers_have_no_partial_field(client) -> None:
+    r = client.post("/api/ask", json={"question": "What grew?", "doc_ids": ["d1"]})
+    assert r.status_code == 200 and "partial" not in r.json()
+
+
+def test_processing_document_without_a_checkpoint_is_rejected(lib, client) -> None:
+    lib.add_processing("p0", askable=False)
+    for path in ("/api/ask", "/api/ask/stream"):
+        r = client.post(path, json={"question": "What grew?", "doc_ids": ["p0"]})
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == "'Processing p0' is not ready yet (processing)."
+    assert lib.asks == []
+
+
+def test_default_selection_stays_ready_only(lib, client) -> None:
+    lib.add_processing("p1", askable=True, pages_indexed=12)
+    r = client.post("/api/ask", json={"question": "What grew?"})
+    assert r.status_code == 200 and lib.asks[-1]["doc_ids"] is None  # library picks ready docs
+    del lib.docs["d1"]  # only a partially indexed document is left: nothing is "ready"
+    r = client.post("/api/ask", json={"question": "What grew?"})
+    assert r.status_code == 409 and "No document is ready yet" in r.json()["detail"]
+
+
+def test_step_event_never_overtakes_held_back_tokens() -> None:
+    """Token text is batched for 50 ms; a step that follows it must queue behind that text."""
+    import asyncio
+
+    from local_agentic_rag.server.asks import AskGate, AskJob
+
+    class Lib:
+        def ask(self, question, doc_ids, history, on_step=None, on_token=None) -> Answer:
+            on_token({"text": "Hello"})  # idle: goes out at once
+            on_token({"text": " world"})  # inside the 50 ms window: held back
+            on_step(TraceStep(step="verify", detail={}, seconds=0.0))
+            return Answer(question=question, answer="Hello world", refused=False)
+
+    async def run() -> list[tuple[str, Any]]:
+        with ThreadPoolExecutor(1) as pool:
+            job = AskJob(Lib(), pool, AskGate(1), "q", None, [], stream_steps=True)
+            await job.future
+            await asyncio.sleep(0.2)  # let the batching timer fire if it is still armed
+            out = []
+            while not job.events.empty():
+                out.append(job.events.get_nowait())
+            return out
+
+    events = asyncio.run(run())
+    kinds = [(n, d.get("text", d.get("step"))) for n, d in events]
+    assert kinds == [("token", "Hello"), ("token", " world"), ("step", "verify")]

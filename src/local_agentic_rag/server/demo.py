@@ -175,12 +175,38 @@ class DemoLibrary:
                 )
             return pg.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
 
+    def highlight_boxes(self, doc_id: str, page: int, chunk_id: str | None) -> list[list[float]]:
+        import pymupdf
+
+        self.get(doc_id)
+        with self._lock:
+            block = next((b for b in self._blocks.get(doc_id, []) if b.chunk_id == chunk_id), None)
+        with _MUPDF_LOCK, pymupdf.open(self.root / f"{doc_id}.pdf") as pdf:
+            if not 1 <= page <= pdf.page_count:
+                raise IndexError(page)
+            if block is None or block.page != page:
+                return []
+            rect = pdf[page - 1].rect
+            r = pymupdf.Rect(block.bbox) + (-3, -2, 3, 2)  # as painted by render_page
+            return [
+                [
+                    round(min(max(v, 0.0), 1.0), 4)
+                    for v in (
+                        r.x0 / rect.width,
+                        r.y0 / rect.height,
+                        r.x1 / rect.width,
+                        r.y1 / rect.height,
+                    )
+                ]
+            ]
+
     def ask(
         self,
         question: str,
         doc_ids: list[str] | None,
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
+        on_token: Callable[[dict[str, Any]], None] | None = None,
     ) -> Answer:
         t_start = time.perf_counter()
         with self._lock:
@@ -264,7 +290,17 @@ class DemoLibrary:
                 "**Demo mode** - no language model is running, so this reply quotes the "
                 "passages that best match your question:\n\n- " + "\n- ".join(parts)
             )
-            step("generate", 1.0, chars=len(ans.answer), preview=ans.answer[:120])
+            if on_token:  # stream the reply like a real model would, ~4 words per piece
+                on_token({"reset": True})
+                words = ans.answer.split(" ")
+                for i in range(0, len(words), 4):
+                    time.sleep(0.12)
+                    on_token(
+                        {"text": " ".join(words[i : i + 4]) + ("" if i + 4 >= len(words) else " ")}
+                    )
+                step("generate", 0.0, chars=len(ans.answer), preview=ans.answer[:120])
+            else:
+                step("generate", 1.0, chars=len(ans.answer), preview=ans.answer[:120])
             ans.grounded = "unverified" not in lowered
             if not ans.grounded:
                 ans.unsupported_claims = ["(simulated) a statement the verifier could not find"]

@@ -227,6 +227,68 @@ def load_index(index_dir: str | Path) -> DocumentIndex:
     return DocumentIndex(state["doc_id"], state["title"], chunks, embeddings, meta, bm25=bm25)
 
 
+def partial_checkpoint(index_dir: str | Path) -> dict | None:
+    """The pass-2 checkpoint of a document that is still being indexed, or None.
+
+    This is the cache key for :func:`load_partial_index`: it changes exactly when the
+    ingest thread commits another batch.  Read-only; ``state.json`` is replaced
+    atomically, so this sees the previous or the next checkpoint, never a torn one.
+    """
+    state = _read_json(Path(index_dir) / "state.json")
+    if (
+        not isinstance(state, dict)
+        or state.get("format") != FORMAT
+        or not state.get("pages_done")
+        or not state.get("n_chunks")
+        or not state.get("dim")
+    ):
+        return None
+    return state
+
+
+def load_partial_index(index_dir: str | Path) -> DocumentIndex | None:
+    """A searchable index over the checkpointed prefix of a document being ingested.
+
+    Safe to call from another thread while pass 2 appends: only the first
+    ``chunk_bytes`` / ``vector_bytes`` bytes named by ``state.json`` are read (data is
+    fsynced before the checkpoint that names it, and a resume truncates to a checkpoint,
+    never below), files are opened read-only, and nothing is written or truncated.
+    BM25 is built in memory; ``bm25.npz`` is not touched.  Returns None before the first
+    checkpoint that holds a passage, or if the files do not (or no longer) back it.
+    The result carries ``pages_indexed`` (pages fully covered by the prefix) and
+    ``pages_total``.
+    """
+    index_dir = Path(index_dir)
+    state = partial_checkpoint(index_dir)
+    if state is None:
+        return None
+    n, dim = int(state["n_chunks"]), int(state["dim"])
+    chunk_bytes, vector_bytes = int(state["chunk_bytes"]), int(state["vector_bytes"])
+    if vector_bytes != n * dim * 2:  # float16
+        return None
+    try:
+        with open(index_dir / "chunks.jsonl", "rb") as f:
+            raw = f.read(chunk_bytes)
+        with open(index_dir / "vectors.f16", "rb") as f:
+            vec = f.read(vector_bytes)
+        if len(raw) != chunk_bytes or len(vec) != vector_bytes:
+            return None
+        chunks = [Chunk.from_dict(json.loads(line)) for line in raw.splitlines() if line.strip()]
+        if len(chunks) != n:
+            return None
+    except (OSError, ValueError, KeyError, TypeError):  # deleted or reset under us
+        return None
+    embeddings = np.frombuffer(vec, dtype=np.float16).reshape(n, dim).astype(np.float32)
+    pages_indexed = min(int(state["pages_done"]), int(state["num_pages"]))
+    meta = {
+        "index_dir": str(index_dir),
+        "partial": {"pages_indexed": pages_indexed, "pages_total": int(state["num_pages"])},
+    }
+    index = DocumentIndex(state["doc_id"], state.get("title") or "", chunks, embeddings, meta)
+    index.pages_indexed, index.pages_total = pages_indexed, int(state["num_pages"])
+    return index
+
+
 # ---------------------------------------------------------------------------
 # Pass 1
 # ---------------------------------------------------------------------------
@@ -355,6 +417,7 @@ def _index_pass(
             "vector_bytes": 0,
             "dim": None,
             "section": "",
+            "section_no": None,
             "has_content": False,
             "empty_pages": [],
             "ocr_pages": [],
@@ -379,6 +442,7 @@ def _index_pass(
         min_chunk_tokens=config.min_chunk_tokens,
         count_tokens=embedder.count_tokens,
         section=state["section"],
+        section_no=state.get("section_no"),
     )
     chunks_out = _AppendFile(index_dir / "chunks.jsonl", state["chunk_bytes"])
     vectors_out = _AppendFile(index_dir / "vectors.f16", state["vector_bytes"])
@@ -403,6 +467,7 @@ def _index_pass(
         state["n_table_chunks"] += sum(c.kind == "table" for c in pending)
         state["pages_done"] += pages_in_batch
         state["section"] = chunker.section
+        state["section_no"] = chunker.section_no
         state["has_content"] = finaliser.has_content
         state["needs_ocr"] = finaliser.needs_ocr
         state["seconds"] += time.perf_counter() - started - state.get("_counted", 0.0)

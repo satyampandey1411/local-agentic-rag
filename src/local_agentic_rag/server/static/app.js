@@ -14,7 +14,7 @@
   const LS_CHAT = 'pdfchat.chat.v1';
   const MAX_SAVED_MESSAGES = 60;
   const HISTORY_TURNS = 6;
-  const MAX_PARALLEL_UPLOADS = 2;
+  const MAX_PARALLEL_UPLOADS = 1; // the server allows one in-flight upload per address
   // Browsers allow ~6 HTTP/1.1 connections per origin; long-lived EventSources use them
   // up, so only the most important documents get a live stream and the rest are polled.
   const MAX_EVENT_STREAMS = 2;
@@ -134,6 +134,53 @@
   }
   const docUrl = (id, suffix = '') => `api/documents/${encodeURIComponent(id)}${suffix}`;
 
+  // ---------------------------------------------------------------- access token (optional)
+  // When the server runs with --token, /api answers 401 until the browser holds the session
+  // cookie (set by POST api/session, HttpOnly, so this script never sees it). EventSource and
+  // <img> cannot send an Authorization header, which is why a cookie is used. Nothing is
+  // stored in the page: no localStorage, no sessionStorage.
+  const rawFetch = window.fetch.bind(window);
+  let loginPending = null;
+  function requestLogin() {
+    if (loginPending) return loginPending;
+    loginPending = new Promise((resolve) => {
+      const input = h('input', { id: 'auth-token', type: 'password', autocomplete: 'current-password', required: true, attrs: { 'aria-label': 'Access token' } });
+      const error = h('p', { className: 'auth-error', attrs: { role: 'alert' }, hidden: true });
+      const button = h('button', { type: 'submit', className: 'btn btn-primary', text: 'Unlock' });
+      const form = h('form', { id: 'auth-form', className: 'auth-box' },
+        h('h2', { className: 'section-title', text: 'Access token required' }),
+        h('p', { className: 'muted', text: 'This server is protected. Enter its access token to continue.' }),
+        input, error, button);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        button.disabled = true;
+        error.hidden = true;
+        try {
+          const res = await rawFetch('api/session', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: input.value }),
+          });
+          if (res.ok) { overlay.remove(); loginPending = null; resolve(); return; }
+          error.textContent = res.status === 401 ? 'That token is not correct.' : `Sign-in failed (HTTP ${res.status}).`;
+        } catch { error.textContent = 'Cannot reach the server.'; }
+        error.hidden = false;
+        button.disabled = false;
+        input.select();
+      });
+      const overlay = h('div', { className: 'auth-overlay', attrs: { role: 'dialog', 'aria-modal': 'true' } }, form);
+      document.body.append(overlay);
+      input.focus();
+    });
+    return loginPending;
+  }
+  // Every API call goes through here: on a 401, ask for the token once, then retry once.
+  window.fetch = async (input, init) => {
+    const res = await rawFetch(input, init);
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (res.status !== 401 || !/^(?:\.\/)?api\//.test(url) || /^(?:\.\/)?api\/session/.test(url)) return res;
+    await requestLogin();
+    return rawFetch(input, init);
+  };
+
   /** Parse a text/event-stream body from fetch() into {event, data} objects. */
   async function* readSSE(body) {
     const reader = body.getReader();
@@ -207,10 +254,13 @@
   const saveSelected = () => store.set(LS_SELECTED, [...state.selected]);
 
   const readyDocs = () => [...state.docs.values()].filter((d) => d.status === 'ready');
+  /** Ready, or still processing but with an indexed prefix that can already answer (partial answer). */
+  const isAskable = (d) => !!d && (d.status === 'ready' || (d.status === 'processing' && d.askable === true));
+  const askableDocs = () => [...state.docs.values()].filter(isAskable);
   const sortedDocs = () => [...state.docs.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  /** Ids the next question is about, or null = every ready document. */
+  /** Ids the next question is about, or null = every ready document (processing ones only when ticked). */
   function scopeIds() {
-    const ids = [...state.selected].filter((id) => state.docs.get(id)?.status === 'ready');
+    const ids = [...state.selected].filter((id) => isAskable(state.docs.get(id)));
     return ids.length ? ids : null;
   }
 
@@ -269,12 +319,14 @@
       docNodes.set(key, n);
     }
     const ready = doc.status === 'ready';
+    const canAsk = isAskable(doc);
     const selected = state.selected.has(doc.doc_id);
-    n.li.classList.toggle('is-selected', selected && ready);
+    n.li.classList.toggle('is-selected', selected && canAsk);
     n.input.checked = selected;
-    n.input.disabled = !ready;
-    n.input.setAttribute('aria-label', ready ? `Ask about ${doc.title}` : `${doc.title} (not ready yet)`);
-    n.input.title = ready ? 'Limit questions to the ticked documents' : 'Available once processing finishes';
+    n.input.disabled = !canAsk;
+    n.input.setAttribute('aria-label', ready ? `Ask about ${doc.title}` : canAsk ? `Ask about the first pages of ${doc.title}` : `${doc.title} (not ready yet)`);
+    n.input.title = ready ? 'Limit questions to the ticked documents'
+      : canAsk ? `Ask about the first ${fmtInt(doc.pages_indexed)} pages now; the rest is still being processed` : 'Available once the first pages are indexed';
     n.title.textContent = doc.title || doc.filename;
     n.title.title = doc.filename;
 
@@ -304,6 +356,7 @@
     if (active) {
       stageBits.push(doc.stage || 'Processing…');
       if (doc.eta_seconds) stageBits.push(`about ${fmtDuration(doc.eta_seconds)} left`);
+      if (doc.askable && doc.pages_indexed) stageBits.push(`first ${fmtInt(doc.pages_indexed)} pages can be asked about`);
     }
     n.stage.hidden = stageBits.length === 0;
     n.stage.textContent = stageBits.join(' · ');
@@ -409,16 +462,17 @@
     const ids = scopeIds();
     const chip = $('scope-chip');
     const hint = $('scope-hint');
-    if (!ready.length) {
+    if (!ready.length && !ids) {
       const processing = [...state.docs.values()].some((d) => d.status === 'queued' || d.status === 'processing');
       chip.replaceChildren(icon('file', 'icon icon-sm'), h('span', { text: processing ? 'Your documents are being processed…' : 'No documents yet' }));
-      hint.textContent = state.docs.size ? 'Documents can be asked about once they are ready.' : '';
+      hint.textContent = askableDocs().length ? 'Tick a document that is still processing to ask about its first pages.'
+        : state.docs.size ? 'Documents can be asked about once they are ready.' : '';
     } else if (!ids) {
       chip.replaceChildren(icon('search', 'icon icon-sm'), 'Searching ', h('strong', { text: ready.length === 1 ? ready[0].title : `all ${ready.length} documents` }));
       hint.textContent = ready.length > 1 ? 'Tick documents to limit questions to them.' : '';
     } else {
       const names = ids.map((id) => state.docs.get(id).title);
-      chip.replaceChildren(icon('search', 'icon icon-sm'), 'Searching ', h('strong', { text: ids.length === 1 ? names[0] : `${ids.length} of ${ready.length} documents`, title: names.join(', ') }));
+      chip.replaceChildren(icon('search', 'icon icon-sm'), 'Searching ', h('strong', { text: ids.length === 1 ? names[0] : `${ids.length} of ${askableDocs().length} documents`, title: names.join(', ') }));
       hint.textContent = `${plural(ids.length, 'document')} selected for questions.`;
     }
     renderWelcome();
@@ -587,6 +641,7 @@
     xhr.upload.onload = () => { u.status = 'finishing'; renderLibrary(); };
     const fail = (msg) => { u.status = 'error'; u.error = msg; u.xhr = null; renderLibrary(); pumpUploads(); };
     xhr.onload = () => {
+      if (xhr.status === 401) { requestLogin().then(() => startUpload(u)); return; } // token needed: retry after sign-in
       let data = null;
       try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
       if (xhr.status >= 200 && xhr.status < 300 && data && data.doc_id) {
@@ -612,12 +667,20 @@
   // ================================================================ chat rendering
   const msgNodes = new Map();
 
+  // The log is a polite live region. While an answer is still being written its card is
+  // rebuilt on every token, so mark the region busy: screen readers then stay quiet and
+  // announce the finished answer once, when busy is cleared.
+  function syncLiveBusy() {
+    $('messages').setAttribute('aria-busy', String(state.messages.some((x) => x.status === 'pending')));
+  }
+
   function renderMessages() {
     const box = $('messages');
     for (const [id, node] of msgNodes) if (!state.messages.some((m) => m.id === id)) { node.remove(); msgNodes.delete(id); }
     for (const m of state.messages) {
       if (!msgNodes.has(m.id)) { const node = buildMessage(m); msgNodes.set(m.id, node); box.append(node); }
     }
+    syncLiveBusy();
     renderWelcome();
   }
 
@@ -627,6 +690,7 @@
     const node = buildMessage(m);
     msgNodes.set(m.id, node);
     if (old) old.replaceWith(node); else $('messages').append(node);
+    syncLiveBusy();
     renderWelcome();
   }
 
@@ -640,7 +704,7 @@
     if (!state.docs.size) {
       sub.textContent = 'Upload a PDF on the left. Every answer cites the pages it comes from, and you can open each source to check it.';
       sugg.replaceChildren();
-    } else if (!ready.length) {
+    } else if (!ready.length && !askableDocs().length) {
       sub.textContent = 'Your documents are being processed. You can ask questions as soon as one is ready.';
       sugg.replaceChildren();
     } else {
@@ -672,6 +736,7 @@
     plan: 'Planned the search', retrieve: 'Searched', grade: 'Checked relevance', generate: 'Drafted answer',
     verify: 'Verified', escalate: 'Searching again', refuse: 'No match', calc: 'Calculated',
     calc_appended: 'Added calculation', infer_citations: 'Matched citations', keep_first_answer: 'Kept first answer',
+    table_reference_added: 'Named the table',
   };
   const STEP_NEXT = {
     plan: 'Searching your documents…', retrieve: 'Reading the passages and writing an answer…',
@@ -689,6 +754,7 @@
   }
 
   function buildPending(m) {
+    if (m.partial && !isSentinelText(m.partial)) return buildStreaming(m);
     const steps = (m.steps || []).map((s) => {
       let text = stepLabel(s.step);
       const pages = s.detail && Array.isArray(s.detail.pages) ? s.detail.pages : null;
@@ -699,6 +765,21 @@
       h('div', { className: 'thinking-now' }, h('span', { className: 'dots', attrs: { 'aria-hidden': 'true' } }, h('span'), h('span'), h('span')),
         h('span', { text: thinkingText(m) })),
       steps.length ? h('ol', { className: 'thinking-steps', attrs: { 'aria-label': 'Steps completed' } }, steps) : null,
+      h('div', { className: 'thinking-elapsed', dataset: { since: m.startedAt } }, elapsedText(m.startedAt)));
+  }
+  // A refusal is generated as the bare marker ANSWER_NOT_FOUND; never flash that to the reader.
+  const isSentinelText = (t) => { const x = t.trim(); return x.includes('ANSWER_NOT_FOUND') || 'ANSWER_NOT_FOUND'.startsWith(x); };
+  // Live answer text while the model is still writing. It is shown as plain DOM text (never
+  // raw HTML) with no citation chips: those need the whole text and come with the final answer.
+  function buildStreaming(m) {
+    const status = m.streamDone
+      ? h('div', { className: 'thinking-now stream-check' },
+        h('span', { className: 'dots', attrs: { 'aria-hidden': 'true' } }, h('span'), h('span'), h('span')),
+        h('span', { text: 'checking the answer against the sources…' }))
+      : null;
+    return h('div', { className: `card thinking streaming${m.streamDone ? ' is-checking' : ''}`, attrs: { 'aria-busy': 'true', 'aria-live': 'off' } },
+      renderRichText(m.partial, () => null),
+      status,
       h('div', { className: 'thinking-elapsed', dataset: { since: m.startedAt } }, elapsedText(m.startedAt)));
   }
   const elapsedText = (since) => `${Math.floor((Date.now() - since) / 1000)} s`;
@@ -763,6 +844,11 @@
     const cites = Array.isArray(a.citations) ? a.citations : [];
     const citeFor = (num) => { const c = cites.find((x) => x.marker === num); return c ? citationChip(m, c) : null; };
     const card = h('div', { className: `card${a.refused ? ' is-refused' : ''}` });
+    if (a.partial && a.partial.pages_total) {
+      // Answers about a document that is still being processed only saw its first pages.
+      card.append(h('div', { className: 'partial-banner', attrs: { role: 'status' } }, icon('alert', 'icon icon-sm'),
+        h('span', { text: `Answered from the first ${fmtInt(a.partial.pages_indexed)} of ${fmtInt(a.partial.pages_total)} pages; this document is still being processed.` })));
+    }
 
     if (a.error) {
       card.classList.add('is-error');
@@ -886,6 +972,9 @@
       'search_queries', 'retrieval_rounds', 'answer_attempts', 'llm_calls', 'latency_sec', 'queue_wait_s', 'error'];
     const out = {};
     for (const k of keep) if (k in a) out[k] = a[k];
+    if (a.partial && typeof a.partial === 'object') {
+      out.partial = { doc_id: String(a.partial.doc_id || ''), pages_indexed: Number(a.partial.pages_indexed) || 0, pages_total: Number(a.partial.pages_total) || 0 };
+    }
     out.trace = (Array.isArray(a.trace) ? a.trace : []).map((t) => {
       let detail = t.detail || {};
       try { if (JSON.stringify(detail).length > 1500) detail = { summary: describeStep(t) }; } catch { detail = {}; }
@@ -898,7 +987,7 @@
     const question = String(text || '').trim();
     if (!question || state.pending) return;
     if (question.length > config.maxQuestionChars) { toast(`Questions are limited to ${fmtInt(config.maxQuestionChars)} characters.`, 'error'); return; }
-    if (!readyDocs().length) {
+    if (!askableDocs().length) {
       toast(state.docs.size ? 'Please wait until a document has finished processing.' : 'Upload a PDF first.', 'error');
       return;
     }
@@ -919,10 +1008,10 @@
     if (state.pending) return;
     if (isRetry) {
       // re-validate the scope: a selected document may have been deleted since
-      if (m.docIds) m.docIds = m.docIds.filter((id) => state.docs.get(id)?.status === 'ready');
+      if (m.docIds) m.docIds = m.docIds.filter((id) => isAskable(state.docs.get(id)));
       if (m.docIds && !m.docIds.length) m.docIds = null;
     }
-    Object.assign(m, { status: 'pending', error: null, answer: null, steps: [], phase: 'connecting', queuePos: 0, startedAt: Date.now() });
+    Object.assign(m, { status: 'pending', error: null, answer: null, steps: [], phase: 'connecting', queuePos: 0, startedAt: Date.now(), partial: '', streamDone: false });
     const controller = new AbortController();
     state.pending = { messageId: m.id, controller, reason: null };
     setComposerBusy(true);
@@ -931,9 +1020,17 @@
     saveMessages();
     const clientTimeout = setTimeout(() => { state.pending.reason = 'timeout'; controller.abort(); }, (config.askTimeoutS * 2 + 60) * 1000);
     let lastRender = 0;
+    let trailing = null;
     const rerender = (force) => {
       const now = Date.now();
-      if (force || now - lastRender > 120) { lastRender = now; updateMessage(m); scrollToBottom(false); }
+      if (force || now - lastRender > 120) {
+        lastRender = now;
+        if (trailing) { clearTimeout(trailing); trailing = null; }
+        updateMessage(m); scrollToBottom(false);
+      } else if (!trailing) {
+        // a throttled update must still happen once the stream goes quiet
+        trailing = setTimeout(() => { trailing = null; if (m.status === 'pending') rerender(true); }, 130);
+      }
     };
     try {
       const res = await fetch('api/ask/stream', {
@@ -951,8 +1048,18 @@
         const d = ev.data || {};
         if (ev.event === 'queued') { m.phase = d.position > 0 ? 'queued' : 'thinking'; m.queuePos = d.position || 0; rerender(true); }
         else if (ev.event === 'started') { m.phase = 'thinking'; rerender(true); }
-        else if (ev.event === 'step') { m.phase = 'thinking'; m.steps.push({ step: d.step, detail: d.detail, seconds: d.seconds }); rerender(false); }
-        else if (ev.event === 'answer') { m.answer = trimAnswer(d); m.status = 'done'; }
+        else if (ev.event === 'step') {
+          m.phase = 'thinking'; m.steps.push({ step: d.step, detail: d.detail, seconds: d.seconds });
+          if (d.step === 'generate' && m.partial) m.streamDone = true; // text stopped: now verifying
+          rerender(!!m.partial);
+        }
+        else if (ev.event === 'token') {
+          m.phase = 'thinking';
+          if (d.reset) { m.partial = ''; m.streamDone = false; }
+          if (typeof d.text === 'string' && d.text) { m.streamDone = false; m.partial = m.partial ? m.partial + d.text : d.text.replace(/^\s+/, ''); }
+          rerender(false);
+        }
+        else if (ev.event === 'answer') { m.answer = trimAnswer(d); m.status = 'done'; m.partial = ''; m.streamDone = false; }
         else if (ev.event === 'error') { m.status = 'error'; m.error = { code: d.code || 'failed', detail: d.detail || 'Answering failed.' }; }
       }
       if (m.status === 'pending') {
@@ -972,6 +1079,8 @@
       }
     } finally {
       clearTimeout(clientTimeout);
+      if (trailing) clearTimeout(trailing);
+      m.partial = ''; m.streamDone = false;
       state.pending = null;
       setComposerBusy(false);
       updateMessage(m);
@@ -1084,6 +1193,11 @@
     let url = `${docUrl(v.docId, `/pages/${v.page}.png`)}?zoom=${renderZoom}`;
     if (v.chunkId && v.page === v.citePage) url += `&chunk_id=${encodeURIComponent(v.chunkId)}`;
     const token = ++pageToken;
+    // Where the cited passage sits on this page (0-1 fractions); fetched alongside the image.
+    const boxes = v.chunkId && v.page === v.citePage
+      ? api(docUrl(v.docId, `/pages/${v.page}/highlight?chunk_id=${encodeURIComponent(v.chunkId)}`))
+        .then((r) => (Array.isArray(r && r.boxes) ? r.boxes : [])).catch(() => [])
+      : Promise.resolve([]);
     $('page-error').hidden = true;
     $('page-loading').hidden = false;
     img.style.opacity = img.hidden ? '1' : '0.45';
@@ -1096,6 +1210,7 @@
       img.style.opacity = '1';
       img.hidden = false;
       $('page-loading').hidden = true;
+      boxes.then((b) => { if (token === pageToken) scrollToHighlight(b[0], probe, width); });
     };
     probe.onerror = async () => {
       if (token !== pageToken) return;
@@ -1105,6 +1220,18 @@
       if (token === pageToken) showViewerError(msg);
     };
     probe.src = url;
+  }
+  // Bring the first highlighted box (0-1 page fractions) to the centre of the page stage.
+  function scrollToHighlight(box, probe, width) {
+    if (!box || !probe.naturalWidth) return;
+    const stage = $('page-stage');
+    const imgBox = $('page-img').getBoundingClientRect();
+    const stageBox = stage.getBoundingClientRect();
+    const height = width * (probe.naturalHeight / probe.naturalWidth);
+    const x = imgBox.left - stageBox.left + stage.scrollLeft + ((box[0] + box[2]) / 2) * width;
+    const y = imgBox.top - stageBox.top + stage.scrollTop + ((box[1] + box[3]) / 2) * height;
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    stage.scrollTo({ top: Math.max(0, y - stage.clientHeight / 2), left: Math.max(0, x - stage.clientWidth / 2), behavior: smooth ? 'smooth' : 'auto' });
   }
   function showViewerError(msg) {
     $('page-img').hidden = true;

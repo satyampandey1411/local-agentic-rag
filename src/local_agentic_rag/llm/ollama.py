@@ -14,14 +14,28 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
-from local_agentic_rag.llm.base import LLM, LLMError, Message
+from local_agentic_rag.llm.base import LLM, LLMError, LLMTimeoutError, Message
 
 logger = logging.getLogger(__name__)
 
 _inflight = 0
 _inflight_lock = threading.Lock()
+
+
+@contextmanager
+def _inflight_scope() -> Iterator[None]:
+    global _inflight
+    with _inflight_lock:
+        _inflight += 1
+    try:
+        yield
+    finally:
+        with _inflight_lock:
+            _inflight -= 1
 
 
 def inflight_requests() -> int:
@@ -126,25 +140,7 @@ class OllamaLLM(LLM):
     ) -> str:
         import requests
 
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": self.keep_alive,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-                "num_ctx": self.num_ctx,
-                "seed": self.seed,
-                "use_mmap": self.use_mmap,
-            },
-        }
-        if stop:
-            payload["options"]["stop"] = stop
-        if json_schema is not None:
-            payload["format"] = json_schema
-        if self.think is not None:
-            payload["think"] = self.think
+        payload = self._payload(messages, max_tokens, temperature, json_schema, stop, stream=False)
 
         last_exc: Exception | None = None
         for attempt in range(self.retries + 1):
@@ -161,10 +157,112 @@ class OllamaLLM(LLM):
             except requests.ReadTimeout as exc:
                 # The server accepted the request but generation exceeded the timeout:
                 # re-sending would just repeat the same long generation.
-                raise LLMError(f"Ollama timed out after {self.timeout:.0f}s") from exc
+                raise LLMTimeoutError(f"Ollama timed out after {self.timeout:.0f}s") from exc
             except (requests.ConnectionError, requests.ConnectTimeout) as exc:
                 last_exc = exc
             logger.warning("Ollama call failed (attempt %d): %s", attempt + 1, last_exc)
+            if attempt < self.retries:
+                time.sleep(self.backoff * (attempt + 1))
+        raise LLMError(f"Ollama unreachable after {self.retries + 1} attempts: {last_exc}")
+
+    def _payload(
+        self,
+        messages: list[Message],
+        max_tokens: int,
+        temperature: float,
+        json_schema: dict[str, Any] | None,
+        stop: list[str] | None,
+        *,
+        stream: bool,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+            "keep_alive": self.keep_alive,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": self.num_ctx,
+                "seed": self.seed,
+                "use_mmap": self.use_mmap,
+            },
+        }
+        if stop:
+            payload["options"]["stop"] = stop
+        if json_schema is not None:
+            payload["format"] = json_schema
+        if self.think is not None:
+            payload["think"] = self.think
+        return payload
+
+    def chat_stream(
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        stop: list[str] | None = None,
+    ) -> Iterator[str]:
+        """Stream the reply (``/api/chat`` with ``"stream": true``, one JSON object per line).
+
+        Connecting is retried like ``chat`` (nothing has been shown yet).  Once the first
+        piece is out a failure cannot be retried without repeating text the caller already
+        has, so a broken connection, an ``error`` line or a stream that ends without its
+        ``done`` line raises ``LLMError``.
+        """
+        import requests
+
+        payload = self._payload(messages, max_tokens, temperature, None, stop, stream=True)
+        last_exc: Exception | None = None
+        for attempt in range(self.retries + 1):
+            resp = None
+            started = False
+            try:
+                with _inflight_scope():
+                    resp = requests.post(
+                        f"{self.host}/api/chat", json=payload, timeout=self.timeout, stream=True
+                    )
+                    if resp.status_code != 200:
+                        error = LLMError(f"Ollama HTTP {resp.status_code}: {resp.text[:300]}")
+                        if resp.status_code < 500:
+                            raise error
+                        last_exc = error
+                    else:
+                        done = False
+                        for raw in resp.iter_lines():
+                            if not raw:
+                                continue
+                            try:
+                                event = json.loads(raw)
+                            except ValueError as exc:
+                                raise LLMError(
+                                    f"Ollama sent a malformed stream line: {exc}"
+                                ) from exc
+                            if event.get("error"):
+                                raise LLMError(f"Ollama stream failed: {event['error']}")
+                            piece = (event.get("message") or {}).get("content", "")
+                            if piece:
+                                started = True
+                                yield piece
+                            if event.get("done"):
+                                done = True
+                                break
+                        if not done:
+                            raise LLMError("Ollama stream ended before the reply was complete")
+                        return
+            except requests.ReadTimeout as exc:
+                raise LLMTimeoutError(f"Ollama timed out after {self.timeout:.0f}s") from exc
+            except (requests.ConnectionError, requests.ConnectTimeout) as exc:
+                if started:
+                    raise LLMError(f"Ollama connection lost mid-stream: {exc}") from exc
+                last_exc = exc
+            except requests.RequestException as exc:  # e.g. ChunkedEncodingError
+                raise LLMError(f"Ollama stream interrupted: {exc}") from exc
+            finally:
+                if resp is not None:
+                    resp.close()
+            logger.warning("Ollama stream failed (attempt %d): %s", attempt + 1, last_exc)
             if attempt < self.retries:
                 time.sleep(self.backoff * (attempt + 1))
         raise LLMError(f"Ollama unreachable after {self.retries + 1} attempts: {last_exc}")

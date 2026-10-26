@@ -25,17 +25,22 @@ from tests.helpers import (  # noqa: E402
 )
 
 
-def _pipe() -> RAGPipeline:
+def _pipe(on_generate=None, nothing_relevant=False) -> RAGPipeline:
     cfg = RAGConfig(ocr="off")
     llm = ScriptedLLM(
         scripted(
             plan=lambda m: {"standalone_question": "q", "search_queries": ["uniqueterm3"]},
             grade=lambda m: {
-                "relevant": [passage_number(m, "uniqueterm3")],
-                "sufficient": True,
+                "relevant": [] if nothing_relevant else [passage_number(m, "uniqueterm3")],
+                "sufficient": not nothing_relevant,
                 "missing_query": "",
             },
-            generate=lambda m: f"Page three says so [{passage_number(m, 'uniqueterm3')}].",
+            generate=lambda m: (
+                on_generate() if on_generate else None,
+                "ANSWER_NOT_FOUND"
+                if nothing_relevant
+                else f"Page three says so [{passage_number(m, 'uniqueterm3')}].",
+            )[1],
             verify={"supported": True, "unsupported_claims": []},
         )
     )
@@ -85,6 +90,12 @@ def test_submit_ingests_in_background_and_answers(tmp_path, upload):
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     with pytest.raises(IndexError):
         lib.render_page(rec.doc_id, 31)
+    boxes = lib.highlight_boxes(rec.doc_id, 3, ans.citations[0].chunk_id)
+    assert boxes and all(0 <= v <= 1 and b[0] < b[2] and b[1] < b[3] for b in boxes for v in b)
+    assert lib.highlight_boxes(rec.doc_id, 3, None) == []
+    assert lib.highlight_boxes(rec.doc_id, 4, ans.citations[0].chunk_id) == []  # chunk is on p.3
+    with pytest.raises(IndexError):
+        lib.highlight_boxes(rec.doc_id, 31, None)
     lib.close()
 
 
@@ -189,12 +200,14 @@ def test_delete_while_processing_then_reupload_same_name_keeps_new_file(
 
     real = library_mod.ingest_pdf
     started = threading.Event()
+    resubmitted = threading.Event()  # keeps the cancelled job's cleanup pending until then
 
     def slow_first(path, *args, **kwargs):
         if kwargs["doc_id"] == "report":  # the first upload: run until cancelled
             started.set()
             while not kwargs["should_stop"]():
                 time.sleep(0.02)
+            resubmitted.wait(30)
             raise IngestCancelled("cancelled")
         return real(path, *args, **kwargs)
 
@@ -205,6 +218,7 @@ def test_delete_while_processing_then_reupload_same_name_keeps_new_file(
     lib.delete(first.doc_id)
     second = lib.submit(_other_pdf(tmp_path, "report.pdf"), "report.pdf")
     assert second.doc_id != first.doc_id  # the id is not reused while cleanup is pending
+    resubmitted.set()
     done = _wait(lib, second.doc_id)
     assert done.status == "ready"
     assert (tmp_path / "lib" / "files" / f"{second.doc_id}.pdf").exists()
@@ -254,3 +268,220 @@ def test_token_counting_shares_the_model_lock():
         assert not done.wait(0.3)  # blocked while another thread holds the lock
     assert done.wait(5)
     t.join()
+
+
+# ---------------------------------------------------------------------------
+# Ask while a document is still being ingested
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def paused_ingest(monkeypatch):
+    """Pause the ingest thread right after its checkpoint at page ``PAUSE_AT`` of pass 2."""
+    import threading
+
+    from local_agentic_rag import library as library_mod
+    from local_agentic_rag.ingest import streaming
+
+    monkeypatch.setattr(streaming, "INDEX_BATCH_PAGES", 10)
+    real = library_mod.ingest_pdf
+    reached, proceed = threading.Event(), threading.Event()
+
+    def pausing(path, *args, **kwargs):
+        real_progress = kwargs["progress"]
+
+        def progress(p):
+            real_progress(p)  # the library records the checkpoint first ...
+            if p.stage == "indexing" and p.pages_done >= 10 and not reached.is_set():
+                reached.set()
+                proceed.wait(60)  # ... then the ingest thread waits here
+
+        return real(path, *args, **{**kwargs, "progress": progress})
+
+    monkeypatch.setattr(library_mod, "ingest_pdf", pausing)
+    yield reached, proceed
+    proceed.set()
+
+
+def _store_bytes(lib: Library, doc_id: str) -> dict[str, bytes]:
+    _, index_dir, _ = lib._row(doc_id)
+    return {n: (Path(index_dir) / n).read_bytes() for n in ("chunks.jsonl", "vectors.f16")}
+
+
+def test_processing_document_with_a_checkpoint_is_askable_and_labelled(
+    tmp_path, upload, paused_ingest, monkeypatch
+):
+    reached, proceed = paused_ingest
+    lib = Library(tmp_path / "lib", pipeline=_pipe())
+    rec = lib.submit(upload(), "Annual Report 2025.pdf")
+    assert reached.wait(60)
+    live = lib.get(rec.doc_id)
+    assert live.status == "processing" and live.askable and live.pages_indexed == 10
+    assert live.to_dict()["askable"] is True and live.to_dict()["pages_indexed"] == 10
+
+    ans = lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+    assert not ans.refused and ans.cited_pages == [3]
+    assert ans.partial == {"doc_id": rec.doc_id, "pages_indexed": 10, "pages_total": 30}
+    assert ans.to_dict()["partial"] == ans.partial
+    assert rec.doc_id not in lib._loaded  # a partial index is never cached as the final one
+    first = lib._partial[rec.doc_id][2]
+    lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+    assert lib._partial[rec.doc_id][2] is first  # same checkpoint: not rebuilt
+    assert lib.render_page(rec.doc_id, 3, chunk_id=ans.citations[0].chunk_id)[:4] == b"\x89PNG"
+    with pytest.raises(ValueError):  # the default selection is ready documents only
+        lib.ask("Where is uniqueterm3?", None, history=[])
+
+    proceed.set()
+    done = _wait(lib, rec.doc_id)
+    assert not done.askable and done.pages_indexed == 30
+    final = lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+    assert final.partial is None and "partial" not in final.to_dict()
+    assert rec.doc_id not in lib._partial and rec.doc_id in lib._loaded
+    with_queries = _store_bytes(lib, rec.doc_id)
+    lib.close()
+
+    # A library nobody asked while it ingested (and with other batch boundaries) produces
+    # byte-identical index files.
+    monkeypatch.undo()
+    lib2 = Library(tmp_path / "lib2", pipeline=_pipe())
+    rec2 = lib2.submit(upload(), "Annual Report 2025.pdf")
+    _wait(lib2, rec2.doc_id)
+    assert _store_bytes(lib2, rec2.doc_id) == with_queries
+    lib2.close()
+
+
+def test_refusal_on_a_partial_document_still_carries_the_banner_fields(
+    tmp_path, upload, paused_ingest
+):
+    reached, proceed = paused_ingest
+    lib = Library(tmp_path / "lib", pipeline=_pipe(nothing_relevant=True))
+    rec = lib.submit(upload(), "report.pdf")
+    assert reached.wait(60)
+    # a question whose answer lies beyond the indexed prefix finds nothing relevant
+    ans = lib.ask("What does page 25 say?", [rec.doc_id], history=[])
+    assert ans.refused
+    assert ans.partial == {"doc_id": rec.doc_id, "pages_indexed": 10, "pages_total": 30}
+    proceed.set()
+    lib.close()
+
+
+def test_processing_document_without_a_checkpoint_is_not_askable(tmp_path, upload):
+    lib = Library(tmp_path / "lib", pipeline=_pipe(), start_worker=False)
+    rec = lib.submit(upload(), "report.pdf")
+    assert not rec.askable and rec.pages_indexed == 0
+    lib._update(rec.doc_id, status="processing")
+    assert lib.partial_index(rec.doc_id) is None
+    with pytest.raises(ValueError, match="not ready"):
+        lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+    lib.close()
+
+
+def test_delete_during_a_partial_ask_is_safe(tmp_path, upload, paused_ingest):
+    import threading
+
+    reached, proceed = paused_ingest
+    asking, release, result = threading.Event(), threading.Event(), {}
+
+    def block_once():
+        if not asking.is_set():
+            asking.set()  # the question is now inside the model call
+            release.wait(60)
+
+    lib = Library(tmp_path / "lib", pipeline=_pipe(on_generate=block_once))
+    rec = lib.submit(upload(), "report.pdf")
+    assert reached.wait(60)
+
+    def ask():
+        try:
+            result["answer"] = lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+        except BaseException as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    t = threading.Thread(target=ask)
+    t.start()
+    assert asking.wait(60)
+    lib.delete(rec.doc_id)  # mid-question, mid-ingest
+    release.set()
+    proceed.set()
+    t.join(60)
+    deadline = time.time() + 60
+    while lib._active is not None:
+        assert time.time() < deadline
+        time.sleep(0.02)
+    with lib._job_lock:  # the job clears _active and removes the files under this lock
+        pass
+
+    assert "error" not in result, result.get("error")  # the ask held its own in-memory copy
+    assert result["answer"].partial["doc_id"] == rec.doc_id and not result["answer"].error
+    with pytest.raises(KeyError):
+        lib.get(rec.doc_id)
+    with pytest.raises(KeyError):  # a later partial ask finds nothing, and caches nothing
+        lib.ask("Where is uniqueterm3?", [rec.doc_id], history=[])
+    assert rec.doc_id not in lib._partial and rec.doc_id not in lib._loaded
+    assert not [p for p in (tmp_path / "lib" / "store").glob("*-*") if p.name != "parsed"]
+    assert not (tmp_path / "lib" / "files" / f"{rec.doc_id}.pdf").exists()
+    lib.close()
+
+
+def test_partial_index_built_while_ingest_finishes_is_not_cached(
+    tmp_path, upload, paused_ingest, monkeypatch
+):
+    """An ask that saw 'processing' and then lost the race with the end of ingest must not
+    leave a partial index in the cache (nothing would ever drop it) nor answer from it."""
+    from local_agentic_rag import library as library_mod
+
+    reached, proceed = paused_ingest
+    lib = Library(tmp_path / "lib", pipeline=_pipe())
+    rec = lib.submit(upload(), "report.pdf")
+    assert reached.wait(60)
+    real = library_mod.load_partial_index
+
+    def load_then_ingest_finishes(index_dir):
+        index = real(index_dir)  # built from the checkpoint ...
+        proceed.set()  # ... and the ingest completes before the caller can cache it
+        _wait(lib, rec.doc_id)
+        deadline = time.time() + 30
+        while rec.doc_id in lib._partial or rec.doc_id not in lib._loaded:
+            assert time.time() < deadline
+            time.sleep(0.01)
+        time.sleep(0.2)  # let _ingest finish its own cleanup
+        return index
+
+    monkeypatch.setattr(library_mod, "load_partial_index", load_then_ingest_finishes)
+    got = lib.partial_index(rec.doc_id)
+    assert rec.doc_id not in lib._partial
+    assert got is not None and got.pages_indexed is None  # the final index: no partial banner
+    assert got is lib._loaded[rec.doc_id]
+    lib.close()
+
+
+def test_concurrent_partial_asks_share_one_build(tmp_path, upload, paused_ingest, monkeypatch):
+    import threading
+
+    from local_agentic_rag import library as library_mod
+
+    reached, proceed = paused_ingest
+    lib = Library(tmp_path / "lib", pipeline=_pipe())
+    rec = lib.submit(upload(), "report.pdf")
+    assert reached.wait(60)
+    real = library_mod.load_partial_index
+    builds, results = [], []
+
+    def slow_load(index_dir):
+        builds.append(1)
+        time.sleep(0.4)  # long enough for the second ask to arrive and wait
+        return real(index_dir)
+
+    monkeypatch.setattr(library_mod, "load_partial_index", slow_load)
+    threads = [
+        threading.Thread(target=lambda: results.append(lib.partial_index(rec.doc_id)))
+        for _ in range(2)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert len(builds) == 1
+    assert len(results) == 2 and results[0] is results[1] and results[0].pages_indexed == 10
+    proceed.set()
+    lib.close()

@@ -133,3 +133,91 @@ def is_refusal(text: str) -> bool:
     if _CONTRAST_RE.search(first) or re.search(r"\d|[०-९]|;", first):
         return False
     return bool(_REFUSAL_RE.search(first))
+
+
+# ---------------------------------------------------------------------------
+# "Which table / figure ...?" answers must name the table (roadmap F6)
+# ---------------------------------------------------------------------------
+#
+# A 7B model often answers "Which table shows X?" by describing the table it found
+# without printing its number.  The number is in the cited chunk (the caption line
+# that ingest puts in front of the table), so it is appended deterministically rather
+# than asked for in the prompt: no prompt text changes, no effect on other questions.
+
+#: Questions of the form "which/what table|figure|exhibit ...", English and Hindi.  A
+#: following number ("what table 3 ...") or a verb that makes "figure" mean "number"
+#: ("which figure is higher") does not count.
+_WHICH_TABLE_RE = re.compile(
+    r"\b(?:which|what)\s+(?:(?:other|specific|particular|statistical|data)\s+)?"
+    r"(?:table|exhibit|figure(?!\s+(?:is|was|are|were|has|had|did|does|do|for|of)\b))s?\b"
+    r"(?!\s*(?:no\.?\s*)?\d)"
+    r"|(?:कौन\s*सी|कौनसी|किस)\s+(?:तालिका|सारणी|टेबल)"
+    r"|(?:कौन\s*सा|कौनसा|किस)\s+(?:चित्र|ग्राफ़?)",
+    re.IGNORECASE,
+)
+_KEYWORD = r"(?i:Table|Figure|Fig\.|Exhibit|तालिका|सारणी|चित्र)"
+#: "12.4", "A.3", "IV", "2" (digits may be Devanagari).
+_IDENT = r"(?:[A-Z]\.?[0-9०-९]+(?:\.[0-9०-९]+)*|[0-9०-९]+(?:\.[0-9०-९]+)*|[IVXL]+)"
+#: An identifier anywhere in an answer ("Table 12.4", "table 2", "Figure A.3").
+_IDENT_IN_ANSWER_RE = re.compile(rf"(?<!\w){_KEYWORD}\s*{_IDENT}(?![\w])")
+#: A caption line: starts with the identifier and a separator ("Table 12.4: Title", "Figure 2. Title").
+_CAPTION_LINE_RE = re.compile(
+    rf"^\s*(?P<ident>{_KEYWORD}\s*{_IDENT})\s*(?:[:.\-–—]\s*|$)(?P<title>.*)$"
+)
+MAX_CAPTION_CHARS = 120
+
+
+def asks_which_table(question: str) -> bool:
+    """True for "which table shows X?" style questions (conservative)."""
+    return bool(_WHICH_TABLE_RE.search(question))
+
+
+def has_table_identifier(text: str) -> bool:
+    return bool(_IDENT_IN_ANSWER_RE.search(text))
+
+
+def find_caption(chunk_text: str) -> tuple[str, str] | None:
+    """(identifier, caption title) from the first caption line of a chunk, if it has one."""
+    lines = chunk_text.splitlines()
+    for i, line in enumerate(lines):
+        m = _CAPTION_LINE_RE.match(line)
+        if not m:
+            continue
+        ident = re.sub(r"\s+", " ", m.group("ident")).strip()
+        title = m.group("title").strip()
+        # A caption wrapped over two text lines continues on a lower-case line.
+        if i + 1 < len(lines) and re.match(r"[a-z]", lines[i + 1].strip()):
+            title = f"{title} {lines[i + 1].strip()}".strip()
+        title = re.sub(r"\[[^\]]*\]", "", title)  # a footnote "[1]" must not read as a citation
+        title = re.sub(r"\s+", " ", title).strip()
+        if len(title) > MAX_CAPTION_CHARS:
+            title = title[:MAX_CAPTION_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:.-") + "…"
+        return ident, title
+    return None
+
+
+def table_reference_suffix(
+    question: str, answer: str, citations: list[Citation], passages: list[ScoredChunk]
+) -> tuple[str, dict[str, object]] | None:
+    """Sentence naming the cited table/figure when a "which table" answer does not.
+
+    Returns ``(suffix, trace detail)`` or ``None``.  The identifier always comes from a
+    chunk the answer already cites, and the sentence re-uses that chunk's citation number.
+    Tables are preferred over text chunks that merely contain a caption line, but the
+    citation order decides within each kind.
+    """
+    if not asks_which_table(question) or has_table_identifier(answer):
+        return None
+    candidates = []
+    for c in citations:
+        if 1 <= c.marker <= len(passages):
+            chunk = passages[c.marker - 1].chunk
+            found = find_caption(chunk.text)
+            if found:
+                candidates.append((chunk.kind != "table", len(candidates), c.marker, chunk, found))
+    if not candidates:
+        return None
+    _, _, marker, chunk, (ident, title) = min(candidates, key=lambda t: t[:2])
+    body = f"{ident}: {title}" if title else ident
+    detail = {"identifier": ident, "marker": marker, "page": chunk.page, "chunk_id": chunk.chunk_id}
+    return f" ({body} [{marker}])", detail

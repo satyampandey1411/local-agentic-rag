@@ -32,6 +32,8 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from decimal import Decimal
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -95,12 +97,178 @@ def is_numeric_alias(alias: str) -> bool:
     return bool(_NUMERIC_ALIAS_RE.fullmatch(normalize_text(alias)))
 
 
+# ---------------------------------------------------------------------------
+# Number words ("seventeen" <-> 17)
+# ---------------------------------------------------------------------------
+#
+# Rule (deliberately conservative; it only ever ADDS matches, and only as a second chance
+# after the plain comparison failed, so every previously matching pair still matches):
+#
+# * An English number-word phrase is rewritten to digits only when its value is >= 11:
+#   "seventeen", "twenty-one", "one hundred and five", "two thousand", "three million".
+#   Words for 0-10 on their own ("one", "two", ..., "ten") are NEVER rewritten: "one of the
+#   three" is prose, not the number 1, so alias "1" must not match it.
+# * Phrases must be well formed ("four two" is not 42; a bare "hundred" or "thousand" is
+#   not a number; "and" is consumed only between "hundred"/"thousand"/... and a following
+#   number word; ordinals such as "seventeenth" are left alone).  Words are joined only by a
+#   single space or hyphen, never by a comma, so "one thousand, two hundred" stays two
+#   numbers rather than guessing 1,200.  Year style ("nineteen eighty-four") is not merged.
+# * "<digits> thousand|million|billion|trillion" ("1.2 million") is expanded to plain digits
+#   ("1200000").  Abbreviations (m, bn, k, lakh, crore) are ambiguous and left alone.
+# * The same rewrite is applied to the alias and to the answer; a digit alias then keeps its
+#   number-boundary rule, so "17" does not match "170" and "21" does not match "121".
+
+_UNITS = {
+    w: i
+    for i, w in enumerate(
+        ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"], start=1
+    )
+}
+_TEENS = {
+    w: 10 + i
+    for i, w in enumerate(
+        [
+            "ten",
+            "eleven",
+            "twelve",
+            "thirteen",
+            "fourteen",
+            "fifteen",
+            "sixteen",
+            "seventeen",
+            "eighteen",
+            "nineteen",
+        ]
+    )
+}
+_TENS = {
+    w: 10 * i
+    for i, w in enumerate(
+        ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"], start=2
+    )
+}
+_SCALES = {"thousand": 10**3, "million": 10**6, "billion": 10**9, "trillion": 10**12}
+_NUMBER_WORDS = {*_UNITS, *_TEENS, *_TENS, "hundred", *_SCALES}
+_MIN_WORD_VALUE = 11  # phrases worth less than this are never converted
+
+_WORD_RE = re.compile(r"[a-z]+")
+# "twenty-first", "thirty third": the number word belongs to an ordinal, not a quantity
+_ORDINAL_AFTER_RE = re.compile(
+    r"[ -](?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth"
+    r"|[a-z]+teenth|[a-z]+ieth|hundredth|thousandth|millionth)\b"
+)
+_DIGIT_SCALE_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(thousand|million|billion|trillion)\b")
+
+
+def _parse_number_phrase(words: Sequence[str], start: int) -> tuple[int, int] | None:
+    """Longest well-formed number phrase beginning at ``words[start]``.
+
+    Returns ``(value, end)`` with ``end`` exclusive, or None if no number word starts here.
+    """
+    total = 0  # completed groups, e.g. the 2,000 in "two thousand five"
+    current = 0  # the group being built (< 1000)
+    last_scale = 10**15
+    best: tuple[int, int] | None = None
+    j = start
+    while j < len(words):
+        w = words[j]
+        if w in _UNITS:
+            if not (current % 100 == 0 or (current % 100 >= 20 and current % 10 == 0)):
+                break
+            current += _UNITS[w]
+        elif w in _TEENS or w in _TENS:
+            if current % 100 != 0:
+                break
+            current += _TEENS[w] if w in _TEENS else _TENS[w]
+        elif w == "hundred":
+            if not 1 <= current <= 9:
+                break
+            current *= 100
+        elif w in _SCALES:
+            if current == 0 or _SCALES[w] >= last_scale:
+                break
+            total += current * _SCALES[w]
+            current = 0
+            last_scale = _SCALES[w]
+        elif w == "and":
+            # British "one hundred and five": only after hundred/scale and before a number
+            prev = words[j - 1] if j > start else ""
+            nxt = words[j + 1] if j + 1 < len(words) else ""
+            if (prev == "hundred" or prev in _SCALES) and nxt in _NUMBER_WORDS:
+                j += 1
+                continue
+            break
+        else:
+            break
+        j += 1
+        best = (total + current, j)
+    return best
+
+
+def _expand_digit_scale(match: re.Match[str]) -> str:
+    value = Decimal(match.group(1)) * _SCALES[match.group(2)]
+    return str(int(value)) if value == value.to_integral_value() else format(value, "f")
+
+
+@lru_cache(maxsize=512)
+def normalize_number_words(text: str) -> str:
+    """Rewrite unambiguous number words and "<n> million" scales to digits.
+
+    ``text`` should already be passed through :func:`normalize_text` (lower-case, ASCII
+    dashes).  See the rule above.  Text without such numbers is returned unchanged.
+    """
+    if not text:
+        return text
+    out = text
+    words = list(_WORD_RE.finditer(out))
+    if any(m.group() in _NUMBER_WORDS for m in words):
+        # Runs of words separated only by a single space or hyphen.
+        runs: list[list[re.Match[str]]] = []
+        for m in words:
+            if runs and out[runs[-1][-1].end() : m.start()] in (" ", "-"):
+                runs[-1].append(m)
+            else:
+                runs.append([m])
+        edits: list[tuple[int, int, str]] = []
+        for run in runs:
+            toks = [m.group() for m in run]
+            i = 0
+            while i < len(toks):
+                parsed = _parse_number_phrase(toks, i)
+                if parsed is None:
+                    i += 1
+                    continue
+                value, end = parsed
+                if value >= _MIN_WORD_VALUE and not _ORDINAL_AFTER_RE.match(
+                    out, run[end - 1].end()
+                ):
+                    edits.append((run[i].start(), run[end - 1].end(), str(value)))
+                i = end
+        for a, b, repl in reversed(edits):
+            out = out[:a] + repl + out[b:]
+    out = _DIGIT_SCALE_RE.sub(_expand_digit_scale, out)
+    return normalize_text(out) if out != text else text
+
+
+def _alias_in(ans: str, al: str) -> bool:
+    """Compare a normalised alias with a normalised answer (numeric aliases: whole numbers)."""
+    if _NUMERIC_ALIAS_RE.fullmatch(al):
+        pattern = r"(?<!\d)(?<!\d\.)" + re.escape(al) + r"(?!\d)(?!\.\d)"
+        return re.search(pattern, ans) is not None
+    return al in ans
+
+
 def alias_matches(answer: str, alias: str, *, normalized: bool = False) -> bool:
     """Return True if ``alias`` occurs in ``answer`` after normalisation.
 
     Non-numeric aliases use plain substring matching.  Purely numeric aliases
     use number-boundary matching so ``"4.2"`` does not match ``"14.25"`` and
     ``"4"`` does not match ``"4.5"`` or ``"1.4"``.
+
+    If that fails, one more attempt is made after rewriting unambiguous English number
+    words and "<n> million" style scales to digits in both texts (see
+    :func:`normalize_number_words`): ``"seventeen"`` matches ``"17"`` and ``"1.2 million"``
+    matches ``"1,200,000"``.  Number words for one to ten are never rewritten.
 
     Args:
         answer: Answer text (raw, or already normalised if ``normalized``).
@@ -111,10 +279,12 @@ def alias_matches(answer: str, alias: str, *, normalized: bool = False) -> bool:
     al = normalize_text(alias)
     if not al or not ans:
         return False
-    if _NUMERIC_ALIAS_RE.fullmatch(al):
-        pattern = r"(?<!\d)(?<!\d\.)" + re.escape(al) + r"(?!\d)(?!\.\d)"
-        return re.search(pattern, ans) is not None
-    return al in ans
+    if _alias_in(ans, al):
+        return True
+    ans2, al2 = normalize_number_words(ans), normalize_number_words(al)
+    if ans2 == ans and al2 == al:
+        return False
+    return _alias_in(ans2, al2)
 
 
 def _iter_facts(required_facts: Iterable[Any]) -> list[list[str]]:
