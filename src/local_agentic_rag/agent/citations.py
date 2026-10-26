@@ -98,6 +98,21 @@ def infer_citations(
     return list(citations.values())
 
 
+def strip_trailing_sentinel(text: str) -> str:
+    """Drop a "not found" sentinel the model appended after a cited answer.
+
+    Observed on Kaggle (Hinglish Taj Mahal question): the model answered both parts with
+    citations and then added ANSWER_NOT_FOUND, so the whole correct answer was discarded as
+    a refusal.  The text before the sentinel is kept only if it carries a [n] citation; a
+    sentinel at the start, or after uncited text, is left in place (still a refusal).
+    """
+    idx = text.find(ANSWER_NOT_FOUND)
+    if idx <= 0:
+        return text
+    head = text[:idx].rstrip()
+    return head if parse_markers(head) else text
+
+
 def is_refusal(text: str) -> bool:
     """True for the sentinel, or an answer whose message is "the document does not say".
 

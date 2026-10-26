@@ -124,3 +124,17 @@ def test_history_condenses_before_first_retrieval(index):  # noqa: F811
     assert calls_by_role(llm)[0] == "plan"
     assert ans.standalone_question == QUESTION
     assert steps(ans) == ["plan", "retrieve", "generate", "verify"]
+
+
+def test_cited_answer_with_trailing_sentinel_is_answered_not_refused(index):  # noqa: F811
+    # Kaggle trace (Hinglish two-part question): a correct cited answer, then the sentinel.
+    agent, llm = adaptive(
+        _scripted(
+            generate=cite("Revenue increased", "Revenue was 4.2 billion [{n}]. " + ANSWER_NOT_FOUND),
+            verify=VERIFY_OK,
+        )
+    )
+    ans = agent.run(QUESTION, [index])
+    assert not ans.refused and "escalate" not in steps(ans)
+    assert ans.answer == "Revenue was 4.2 billion [1]." and ans.cited_pages == [3]
+    assert ANSWER_NOT_FOUND in ans.raw_response  # the raw model output is kept for the trace

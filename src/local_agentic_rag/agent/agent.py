@@ -55,6 +55,7 @@ from local_agentic_rag.agent.citations import (
     infer_citations,
     is_refusal,
     strip_invalid_markers,
+    strip_trailing_sentinel,
 )
 from local_agentic_rag.config import RAGConfig
 from local_agentic_rag.llm.base import LLM, LLMError, LLMOutputError
@@ -483,6 +484,7 @@ class AgenticRAG:
 
         raw = self._step(ans, "generate", call)
         ans.raw_response = raw
+        raw = strip_trailing_sentinel(raw)
         if is_refusal(raw):
             ans.refused = True
             ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)

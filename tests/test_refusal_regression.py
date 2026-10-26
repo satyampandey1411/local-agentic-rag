@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from local_agentic_rag.agent import prompts as P
-from local_agentic_rag.agent.citations import is_refusal
+from local_agentic_rag.agent.citations import is_refusal, strip_trailing_sentinel
 
 
 @pytest.mark.parametrize(
@@ -54,3 +54,26 @@ def test_prompt_has_a_single_refusal_rule():
     )
     assert "do not describe related content" not in prompt
     assert prompt.count(P.ANSWER_NOT_FOUND) == 1
+
+
+def test_cited_answer_with_trailing_sentinel_is_kept():
+    # Kaggle run, ml-hi-tajmahal-q06: a correct, cited two-part answer followed by the sentinel.
+    raw = (
+        "ताजमहल शाहजहाँ ने अपनी पत्नी मुमताज़ महल की याद में बनवाया था [1]. "
+        f"यह 1983 में युनेस्को विश्व धरोहर स्थल घोषित किया गया था [4]. {P.ANSWER_NOT_FOUND}"
+    )
+    cleaned = strip_trailing_sentinel(raw)
+    assert P.ANSWER_NOT_FOUND not in cleaned and cleaned.endswith("[4].")
+    assert not is_refusal(cleaned)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        f"{P.ANSWER_NOT_FOUND} [The passages do not provide the Hugging Face identifier.]",
+        f"I looked through the passages. {P.ANSWER_NOT_FOUND}",  # no citation before it
+        f"The passages do not provide the identifier [2]. {P.ANSWER_NOT_FOUND}",
+    ],
+)
+def test_sentinel_without_a_cited_answer_is_still_a_refusal(raw):
+    assert is_refusal(strip_trailing_sentinel(raw))
