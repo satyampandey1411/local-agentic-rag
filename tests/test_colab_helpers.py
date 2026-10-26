@@ -245,10 +245,26 @@ def test_build_chat_ui_with_fake_pipeline():
 
 
 @pytest.fixture(scope="module")
-def notebook():
-    nbformat = pytest.importorskip("nbformat")
-    subprocess.run([sys.executable, str(BUILDER)], check=True, capture_output=True)
-    return nbformat.read(NOTEBOOK, as_version=4)
+def built_notebook_path(tmp_path_factory):
+    """Build into a temp dir so running the tests never rewrites the committed notebook."""
+    pytest.importorskip("nbformat")
+    out = tmp_path_factory.mktemp("nb") / NOTEBOOK.name
+    subprocess.run([sys.executable, str(BUILDER), str(out)], check=True, capture_output=True)
+    return out
+
+
+@pytest.fixture(scope="module")
+def notebook(built_notebook_path):
+    import nbformat
+
+    return nbformat.read(built_notebook_path, as_version=4)
+
+
+def test_committed_notebook_is_up_to_date(built_notebook_path):
+    # Fails when build_notebook.py changed but notebooks/Local_Agentic_RAG.ipynb was not rebuilt.
+    assert built_notebook_path.read_text() == NOTEBOOK.read_text(), (
+        "run: python notebooks/build_notebook.py"
+    )
 
 
 def test_notebook_is_valid(notebook):
@@ -259,7 +275,7 @@ def test_notebook_is_valid(notebook):
     assert meta["accelerator"] == "GPU"
     assert meta["colab"]["gpuType"] == "T4"
     assert meta["kernelspec"]["name"] == "python3"
-    json.loads(NOTEBOOK.read_text())  # plain JSON too
+    json.loads(NOTEBOOK.read_text())  # the committed file is plain JSON too
 
 
 def _strip_magics(source: str) -> str:

@@ -11,6 +11,7 @@ short, reviewable in diffs, and checked by ``tests/test_colab_helpers.py``
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import nbformat
@@ -434,6 +435,8 @@ print_resource_report()
 
 def build() -> nbformat.NotebookNode:
     nb = new_notebook(cells=CELLS)
+    for i, cell in enumerate(nb.cells):  # stable ids: rebuilding an unchanged notebook is a no-op
+        cell.id = f"cell-{i:02d}"
     nb.metadata = {
         "accelerator": "GPU",
         "colab": {"gpuType": "T4", "provenance": [], "name": OUT.name},
@@ -444,11 +447,12 @@ def build() -> nbformat.NotebookNode:
 
 
 def main() -> None:
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else OUT
     nb = build()
     nbformat.validate(nb)
-    nbformat.write(nb, OUT)
+    nbformat.write(nb, out)
     n_code = sum(c.cell_type == "code" for c in nb.cells)
-    print(f"wrote {OUT} ({len(nb.cells)} cells, {n_code} code)")
+    print(f"wrote {out} ({len(nb.cells)} cells, {n_code} code)")
 
 
 if __name__ == "__main__":
