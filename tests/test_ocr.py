@@ -75,3 +75,33 @@ def test_missing_language_pack_falls_back_to_english(scanned_pdf, monkeypatch):
 def test_ocr_off_leaves_scanned_pdf_unreadable(scanned_pdf):
     with pytest.raises(pdfmod.PDFParseError, match="scanned"):
         parse_pdf(scanned_pdf, ocr="off")
+
+
+def test_garbled_fraction():
+    from local_agentic_rag.ingest.pdf import garbled_fraction
+
+    assert garbled_fraction("Real GDP increased 3.8 percent in the second quarter.") == 0.0
+    assert garbled_fraction("  ab") > 0.5
+    assert garbled_fraction("(cid:12)(cid:7)(cid:44) word") > 0.5
+    assert garbled_fraction("") == 0.0
+
+
+def test_garbled_text_layer_goes_to_ocr(tmp_path, monkeypatch):
+    """A page whose text layer is garbage is OCR'd like a scan (when OCR is available)."""
+    import pymupdf
+
+    from local_agentic_rag.ingest import pdf as P
+
+    path = tmp_path / "garbled.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 100), "fine text " * 3)
+    doc.save(path)
+    monkeypatch.setattr(P, "garbled_fraction", lambda text: 0.9)
+    monkeypatch.setattr(P, "_ocr_cli_paragraphs", lambda page, no, lang: ["Recovered by OCR."])
+    with pymupdf.open(path) as d:
+        raw = P._extract_page(d[0], 1, [], True, "eng")
+    assert raw.ocr_applied and [b.text for b in raw.blocks] == ["Recovered by OCR."]
+    with pymupdf.open(path) as d:  # without OCR the text layer is kept as is
+        raw = P._extract_page(d[0], 1, [], False, "eng")
+    assert not raw.ocr_applied and "fine text" in raw.blocks[0].text

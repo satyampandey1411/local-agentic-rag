@@ -285,16 +285,16 @@ def test_reranker_none_when_disabled(tmp_path):
 
 
 def test_variants_share_one_parse_per_pdf(tmp_path, pdfs, monkeypatch):
-    from local_agentic_rag import pipeline as pl
+    from local_agentic_rag.ingest import streaming
 
     calls = []
-    real_parse = pl.parse_pdf
+    real_parse = streaming.iter_raw_batches
 
     def counting_parse(*args, **kwargs):
         calls.append(args[0])
         return real_parse(*args, **kwargs)
 
-    monkeypatch.setattr(pl, "parse_pdf", counting_parse)
+    monkeypatch.setattr(streaming, "iter_raw_batches", counting_parse)
     pipe, _ = make_pipeline(tmp_path)
     pipe.ingest(pdfs["text"], doc_id="a")
     variant = pipe.variant(chunk_tokens=128)  # different chunking/index, same parse

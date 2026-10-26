@@ -21,7 +21,7 @@ from typing import Any, Literal
 RetrievalMode = Literal["dense", "bm25", "hybrid"]
 
 #: Bump whenever parsing/chunking code changes output, so cached indexes are rebuilt.
-INGEST_VERSION = "2026.10.26-6"  # table captions + table chunk sections
+INGEST_VERSION = "2026.10.26-9"  # streaming store, line-level header stripping, OCR of garbled text
 
 
 @dataclass(frozen=True)

@@ -256,3 +256,47 @@ def test_directory_path_raises_file_not_found(tmp_path):
 
 def test_pdf_parse_error_is_runtime_error():
     assert issubclass(PDFParseError, RuntimeError)
+
+
+def test_per_chapter_running_header_lines_are_stripped(tmp_path):
+    """A header block = fixed title line + a chapter line that changes every few pages."""
+    import pymupdf
+
+    path = tmp_path / "chapters.pdf"
+    doc = pymupdf.open()
+    for p in range(20):  # 5 chapters x 4 pages: each chapter line is on 20% of pages
+        page = doc.new_page()
+        chapter = p // 4 + 1
+        page.insert_text(
+            (72, 30),
+            f"Statistical Compendium 2024\nChapter {chapter}: Region {'ABCDE'[p // 4]}",
+            fontsize=8,
+        )
+        page.insert_text(
+            (72, 120), f"Body text on page {p + 1} about district {p} totals.", fontsize=11
+        )
+        page.insert_text((280, 810), f"Page {p + 1}", fontsize=8)
+    doc.save(path)
+    parsed = parse_pdf(path, ocr="off")
+    texts = [b.text for page in parsed.pages for b in page.blocks]
+    assert not any("Compendium" in t or t.startswith("Chapter ") for t in texts), texts[:6]
+    assert sum("Body text" in t for t in texts) == 20
+
+
+def test_numbered_headings_at_page_top_are_not_running_headers(tmp_path):
+    """'3.1 ...' .. '3.5 ...' at the top of 5 consecutive pages differ only in digits; the
+    consecutive-page rule compares exact text, so they are kept (they are under 40%)."""
+    import pymupdf
+
+    path = tmp_path / "sections.pdf"
+    doc = pymupdf.open()
+    for p in range(20):
+        page = doc.new_page()
+        if p < 5:
+            page.insert_text((72, 30), f"Section 3.{p + 1} Results", fontsize=8)
+        page.insert_text(
+            (72, 120), f"Body text on page {p + 1} about district {p} totals.", fontsize=11
+        )
+    doc.save(path)
+    texts = [b.text for page in parse_pdf(path, ocr="off").pages for b in page.blocks]
+    assert sum(t.startswith("Section 3.") for t in texts) == 5

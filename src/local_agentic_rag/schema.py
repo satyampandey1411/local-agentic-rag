@@ -136,6 +136,7 @@ class IngestReport:
     seconds: float
     cached: bool
     warnings: list[str]
+    resumed_from_page: int = 0  # >0: an interrupted ingest continued after this page
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

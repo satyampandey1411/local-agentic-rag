@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from local_agentic_rag.schema import Chunk, ParsedDocument
+from local_agentic_rag.schema import Chunk, PageContent, ParsedDocument
 
 TokenCounter = Callable[[str], int]
 
@@ -74,9 +74,45 @@ def chunk_document(
     min_chunk_tokens: int = 24,
     count_tokens: TokenCounter = approx_token_count,
 ) -> list[Chunk]:
-    chunks: list[Chunk] = []
-    section = ""
-    for page in doc.pages:
+    chunker = PageChunker(
+        doc.doc_id,
+        doc.title,
+        chunk_tokens=chunk_tokens,
+        overlap_tokens=overlap_tokens,
+        min_chunk_tokens=min_chunk_tokens,
+        count_tokens=count_tokens,
+    )
+    return [c for page in doc.pages for c in chunker.add_page(page)]
+
+
+class PageChunker:
+    """Chunks pages one at a time, in order.
+
+    The only state carried between pages is the current section heading, so a
+    streaming ingest can checkpoint it (``section``) and resume mid-document.
+    """
+
+    def __init__(
+        self,
+        doc_id: str,
+        doc_title: str,
+        *,
+        chunk_tokens: int = 320,
+        overlap_tokens: int = 48,
+        min_chunk_tokens: int = 24,
+        count_tokens: TokenCounter = approx_token_count,
+        section: str = "",
+    ) -> None:
+        self.doc_id, self.doc_title = doc_id, doc_title
+        self.chunk_tokens, self.overlap_tokens = chunk_tokens, overlap_tokens
+        self.min_chunk_tokens, self.count_tokens = min_chunk_tokens, count_tokens
+        self.section = section
+
+    def add_page(self, page: PageContent) -> list[Chunk]:
+        chunk_tokens, overlap_tokens = self.chunk_tokens, self.overlap_tokens
+        min_chunk_tokens, count_tokens = self.min_chunk_tokens, self.count_tokens
+        chunks: list[Chunk] = []
+        section = self.section
         page_section_start = section
         buf = _PageBuffer(section, min_chunk_tokens)
         for block in page.blocks:
@@ -96,21 +132,21 @@ def chunk_document(
                 buf.add(unit, n, section)
         buf.flush()
         buf.flush(force=True)  # a fragment that could not be merged
-        page_chunks = buf.chunks
+        self.section = section
 
         # Drop fragments with no real content (stray labels, figure axis ticks).
-        page_chunks = [(sec, text) for sec, text in page_chunks if count_tokens(text) >= 4]
+        page_chunks = [(sec, text) for sec, text in buf.chunks if count_tokens(text) >= 4]
         for i, (sec, text) in enumerate(page_chunks):
             chunks.append(
                 Chunk(
-                    chunk_id=f"{doc.doc_id}-p{page.page}-c{i}",
-                    doc_id=doc.doc_id,
+                    chunk_id=f"{self.doc_id}-p{page.page}-c{i}",
+                    doc_id=self.doc_id,
                     page=page.page,
                     section=sec,
                     text=text,
                     kind="text",
                     n_tokens=count_tokens(text),
-                    doc_title=doc.title,
+                    doc_title=self.doc_title,
                 )
             )
 
@@ -120,17 +156,17 @@ def chunk_document(
                     continue
                 chunks.append(
                     Chunk(
-                        chunk_id=f"{doc.doc_id}-p{page.page}-t{t_index}-{part_index}",
-                        doc_id=doc.doc_id,
+                        chunk_id=f"{self.doc_id}-p{page.page}-t{t_index}-{part_index}",
+                        doc_id=self.doc_id,
                         page=page.page,
                         section=_table_section(table, page_section_start or section),
                         text=part,
                         kind="table",
                         n_tokens=count_tokens(part),
-                        doc_title=doc.title,
+                        doc_title=self.doc_title,
                     )
                 )
-    return chunks
+        return chunks
 
 
 def _table_section(table: str, inherited: str) -> str:
