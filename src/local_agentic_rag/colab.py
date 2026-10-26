@@ -220,6 +220,9 @@ def print_resource_report() -> None:
 # --------------------------------------------------------------------------- Ollama
 
 
+INSTALL_ATTEMPTS = 3
+
+
 def install_ollama(verbose: bool = True) -> str:
     """Install the Ollama binary (no-op if ``ollama`` is already on PATH).
 
@@ -248,15 +251,22 @@ def install_ollama(verbose: bool = True) -> str:
         if result.returncode != 0:
             print(f"WARNING: apt-get install {missing} failed:\n{result.stderr[-1000:]}")
 
-    if verbose:
-        print("Installing Ollama (official install script) ...")
-    result = subprocess.run(
-        f"curl -fsSL {OLLAMA_INSTALL_URL} | sh",
-        shell=True,
-        capture_output=True,
-        text=True,
-    )
-    path = shutil.which("ollama")
+    # The installer downloads ~1.5 GB; a connection reset half-way ("curl: (56)") was
+    # observed on Kaggle, so transient network failures are retried.
+    for attempt in range(1, INSTALL_ATTEMPTS + 1):
+        if verbose:
+            print(f"Installing Ollama (official install script, attempt {attempt}) ...")
+        result = subprocess.run(
+            f"curl -fsSL {OLLAMA_INSTALL_URL} | sh",
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+        path = shutil.which("ollama")
+        if result.returncode == 0 and path is not None:
+            break
+        if attempt < INSTALL_ATTEMPTS:
+            time.sleep(10 * attempt)
     if result.returncode != 0 or path is None:
         tail = (result.stdout + result.stderr)[-2000:]
         raise RuntimeError(f"Ollama installation failed (exit {result.returncode}):\n{tail}")
@@ -660,3 +670,62 @@ def format_ingest_report(report: IngestReport) -> str:
 
 def print_ingest_report(report: IngestReport) -> None:
     print(format_ingest_report(report))
+
+
+def ingest_progress(min_interval: float = 2.0):
+    """``pipe.ingest(path, progress=ingest_progress())``: one updating status line.
+
+    Long PDFs take minutes; this shows the stage, the page reached and an ETA.
+    """
+    last = [0.0]
+
+    def show(p) -> None:
+        now = time.perf_counter()
+        if p.stage not in ("done", "finalising") and now - last[0] < min_interval:
+            return
+        last[0] = now
+        eta = f", about {p.eta / 60:.0f} min left" if p.eta and p.eta >= 90 else ""
+        end = "\n" if p.stage == "done" else ""
+        print(f"\r{p.message}{eta}" + " " * 20, end=end, flush=True)
+
+    return show
+
+
+def launch_web_app(
+    pipe,
+    library_dir: str = "/content/library",
+    port: int = 8000,
+    max_concurrent_asks: int = 1,
+):
+    """Start the document-library web app in a background thread, sharing ``pipe``'s models.
+
+    In Colab the page opens inside the notebook through Colab's private port proxy (only you
+    can reach it; nothing is public).
+    Returns ``(library, server)``; ``server.should_exit = True`` stops it.
+    """
+    import uvicorn
+
+    from local_agentic_rag.library import Library
+    from local_agentic_rag.server.app import create_app
+
+    library = Library(library_dir, pipeline=pipe)
+    app = create_app(
+        library,
+        max_concurrent_asks=max_concurrent_asks,
+        upload_dir=os.path.join(library_dir, ".incoming"),
+    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, name="web-app", daemon=True).start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.1)
+    if is_colab():
+        from google.colab import output  # type: ignore[import-not-found]
+
+        # The iframe form is Colab's recommended one; "as_window" now warns that browser
+        # security changes may break it.
+        output.serve_kernel_port_as_iframe(port, height=820)
+    else:
+        print(f"Web app running at http://127.0.0.1:{port}/")
+    return library, server

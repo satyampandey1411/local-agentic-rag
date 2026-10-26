@@ -204,6 +204,31 @@ def test_install_ollama_skips_when_present(monkeypatch):
     assert colab.install_ollama(verbose=False) == "/usr/bin/ollama"
 
 
+def test_install_ollama_retries_a_dropped_download(monkeypatch):
+    """Kaggle: "curl: (56) Connection reset by peer" half-way through the installer."""
+    import subprocess as sp
+
+    state = {"calls": 0, "installed": False}
+
+    def which(name):
+        if name == "ollama":
+            return "/usr/local/bin/ollama" if state["installed"] else None
+        return "/usr/bin/" + name  # zstd / lspci present: no apt-get
+
+    def run(cmd, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return sp.CompletedProcess(cmd, 2, "", "curl: (56) Recv failure: Connection reset")
+        state["installed"] = True
+        return sp.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(colab.shutil, "which", which)
+    monkeypatch.setattr(colab.subprocess, "run", run)
+    monkeypatch.setattr(colab.time, "sleep", lambda s: None)
+    assert colab.install_ollama(verbose=False) == "/usr/local/bin/ollama"
+    assert state["calls"] == 2
+
+
 def test_runner_scan_can_be_scoped_to_one_server(tmp_path):
     def proc(pid, name, ppid, anon_kb, cmdline=b""):
         d = tmp_path / str(pid)
@@ -317,7 +342,7 @@ def test_notebook_covers_required_sections(notebook):
         "nvidia-smi",
         "REPO_URL",
         "REPO_ZIP",
-        "[colab]",
+        "[colab,web]",
         "setup_llm(",
         "pipe.load_models()",
         "pipe.ingest(",

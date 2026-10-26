@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>PDF Chat</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Cpath d='M10 8h9l5 5v11a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body data-view="chat">
+  <a class="skip-link" href="#composer-input">Skip to question box</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><path d="M10 8h9l5 5v11a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z"/></svg>
+      <span class="brand-name">PDF Chat</span>
+      <span class="brand-tag">local &amp; private</span>
+    </div>
+    <nav class="view-tabs" aria-label="Panels">
+      <button type="button" class="view-tab" data-view-target="library" aria-controls="library-panel">Documents <span class="tab-badge" id="tab-doc-count" hidden></span></button>
+      <button type="button" class="view-tab" data-view-target="chat" aria-controls="chat-panel">Chat</button>
+      <button type="button" class="view-tab" data-view-target="viewer" aria-controls="viewer-panel">Source</button>
+    </nav>
+    <div class="health" id="health" role="status" aria-live="polite">
+      <span class="health-dot" aria-hidden="true"></span>
+      <span class="health-text">Connecting…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ============================================================ library -->
+    <aside class="panel library" id="library-panel" aria-label="Document library">
+      <div class="dropzone" id="dropzone">
+        <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <p class="dropzone-title">Drop PDFs here</p>
+        <p class="dropzone-sub">or</p>
+        <button type="button" class="btn btn-primary" id="choose-files">Choose files</button>
+        <input type="file" id="file-input" accept="application/pdf,.pdf" multiple hidden>
+        <p class="dropzone-hint" id="upload-limit">Large documents are fine — processing runs in the background.</p>
+      </div>
+
+      <div class="library-head">
+        <h2 class="section-title">Library</h2>
+        <button type="button" class="btn btn-ghost btn-sm" id="select-toggle" hidden>Select all</button>
+      </div>
+      <p class="scope-hint" id="scope-hint"></p>
+      <ul class="doc-list" id="doc-list" aria-label="Documents"></ul>
+      <div class="empty-library" id="empty-library" hidden>
+        <p>No documents yet.</p>
+        <p class="muted">Upload a PDF to start asking questions about it.</p>
+      </div>
+    </aside>
+
+    <!-- ============================================================ chat -->
+    <section class="panel chat" id="chat-panel" aria-label="Chat">
+      <div class="chat-head">
+        <div class="scope" id="scope-chip" aria-live="polite"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-chat" title="Clear the conversation">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          New chat
+        </button>
+      </div>
+      <div class="banner" id="banner" role="alert" hidden></div>
+      <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions" tabindex="-1">
+        <div class="welcome" id="welcome">
+          <h1 class="welcome-title">Ask your documents anything</h1>
+          <p class="welcome-sub" id="welcome-sub">Every answer cites the pages it comes from, and you can open each source to check it.</p>
+          <div class="suggestions" id="suggestions"></div>
+        </div>
+      </div>
+      <form class="composer" id="composer" autocomplete="off">
+        <label class="visually-hidden" for="composer-input">Your question</label>
+        <textarea id="composer-input" rows="1" maxlength="2000" placeholder="Ask a question about your documents…" aria-describedby="composer-hint"></textarea>
+        <button type="submit" class="btn btn-primary btn-send" id="send" aria-label="Send question">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13m0 0-5-5m5 5-5 5"/></svg>
+        </button>
+        <button type="button" class="btn btn-danger-ghost btn-send" id="stop" aria-label="Stop waiting for this answer" hidden>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+        </button>
+      </form>
+      <p class="composer-hint" id="composer-hint"><span class="hint-keys"><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · </span><span class="hint-trust">Open a citation to check any answer.</span> <span class="char-count" id="char-count"></span></p>
+    </section>
+
+    <!-- ============================================================ viewer -->
+    <aside class="panel viewer" id="viewer-panel" aria-label="Source viewer">
+      <div class="viewer-head">
+        <div class="viewer-title-wrap">
+          <h2 class="section-title" id="viewer-title">Source</h2>
+          <p class="viewer-sub muted" id="viewer-sub">Click a citation like <span class="chip chip-static">[1]</span> to see the page it came from.</p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-icon" id="viewer-close" aria-label="Close source viewer">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="viewer-toolbar" id="viewer-toolbar" hidden>
+        <div class="pager">
+          <button type="button" class="btn btn-ghost btn-icon" id="page-prev" aria-label="Previous page">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+          </button>
+          <label class="page-input-wrap">
+            <span class="visually-hidden">Page number</span>
+            <input type="number" id="page-input" min="1" inputmode="numeric">
+            <span class="muted" id="page-total"></span>
+          </label>
+          <button type="button" class="btn btn-ghost btn-icon" id="page-next" aria-label="Next page">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </div>
+        <div class="zoomer">
+          <button type="button" class="btn btn-ghost btn-icon" id="zoom-out" aria-label="Zoom out">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm zoom-label" id="zoom-reset" aria-label="Fit page to width">100%</button>
+          <button type="button" class="btn btn-ghost btn-icon" id="zoom-in" aria-label="Zoom in">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="page-stage" id="page-stage" tabindex="0" aria-label="Page image. Use the arrow keys to change page.">
+        <div class="page-empty" id="page-empty">
+          <svg class="icon icon-xl" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+          <p>No source open</p>
+        </div>
+        <div class="page-loading" id="page-loading" hidden><span class="spinner" aria-hidden="true"></span><span>Rendering page…</span></div>
+        <p class="page-error" id="page-error" role="alert" hidden></p>
+        <img id="page-img" alt="" hidden>
+      </div>
+      <div class="sources" id="sources" hidden>
+        <h3 class="sources-title">Sources for this answer</h3>
+        <ol class="source-list" id="source-list"></ol>
+      </div>
+    </aside>
+  </main>
+
+  <div class="drop-overlay" id="drop-overlay" hidden><div>Drop PDFs to upload</div></div>
+  <div class="toast-region" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

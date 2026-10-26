@@ -137,7 +137,7 @@ print("Code at", REPO_DIR)
     code(r"""
 # Tesseract OCR with Hindi + Marathi language packs (for scanned / image-only PDFs).
 !apt-get -qq install -y tesseract-ocr tesseract-ocr-hin tesseract-ocr-mar > /dev/null 2>&1 && tesseract --list-langs | tail -n +2 | tr '\n' ' '
-!pip install -q -e "{REPO_DIR}[colab]"
+!pip install -q -e "{REPO_DIR}[colab,web]"
 import importlib
 import sys
 
@@ -203,13 +203,18 @@ Set `PDF_SOURCE = "upload"` to use your own file. The default `"sample"` downloa
 three benchmark PDFs (each checked against its SHA-256 hash) and uses the arXiv paper
 *Collapse of Dense Retrievers* (ACL 2025, 17 pages, two-column layout with many tables).
 Indexes are cached by file hash, so ingesting the same file again is instant.
+
+Long PDFs (thousands of pages) are read in page batches by parallel worker processes and
+indexed batch by batch, with a checkpoint after each one. The status line shows the page
+reached and an estimate of the time left. If the runtime stops half-way, running the cell
+again continues from the last checkpoint instead of page 1.
 """),
     code(r"""
 PDF_SOURCE = "sample"     # "sample" or "upload"
 PDF_DIR = "/content/pdfs"
 """),
     code(r"""
-from local_agentic_rag.colab import print_ingest_report
+from local_agentic_rag.colab import ingest_progress, print_ingest_report
 
 if PDF_SOURCE == "upload":
     from google.colab import files
@@ -225,7 +230,7 @@ else:
 
 for path in pdf_paths:
     with timed("ingest"):
-        report = pipe.ingest(path)
+        report = pipe.ingest(path, progress=ingest_progress())
     print_ingest_report(report)
 DOC_ID = report.doc_id
 """),
@@ -278,6 +283,22 @@ from local_agentic_rag.app import launch_chat_ui
 
 SHARE_PUBLIC_LINK = False   # True prints a public *.gradio.live URL that anyone can open
 demo = launch_chat_ui(pipe, share=SHARE_PUBLIC_LINK)
+"""),
+    md(r"""
+### 7b. Document library web app
+
+A fuller app for real use: a library of PDFs that are processed in the background (upload
+a 5,000-page PDF and keep asking questions about the others), live progress, answers with
+citation chips that open the **source page with the cited passage highlighted**, and document
+management (delete, retry). It reuses the models already loaded above. In Colab it opens
+through Colab's private port proxy, so it is not public. Uploaded files and indexes live in
+`/content/library` and are gone when the runtime is deleted.
+"""),
+    code(r"""
+from local_agentic_rag.colab import launch_web_app
+
+library, web_server = launch_web_app(pipe, library_dir="/content/library", port=8000)
+# web_server.should_exit = True   # stops the app
 """),
     # ------------------------------------------------------------------ 8. benchmark
     md(r"""

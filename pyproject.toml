@@ -25,6 +25,11 @@ colab = [
     "gradio>=5",                  # chat UI (Colab preinstalls gradio 6.x; do not downgrade)
     "nbformat>=5.9",
 ]
+web = [
+    "fastapi>=0.110",             # document library web app (python -m local_agentic_rag.server)
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",    # streaming multipart upload parser
+]
 llamacpp = [
     "llama-cpp-python>=0.3",      # in-process GGUF backend (CPU dev / no server)
 ]
@@ -39,9 +44,13 @@ dev = [
 
 [project.scripts]
 local-rag-bench = "local_agentic_rag.bench:main"
+local-rag-server = "local_agentic_rag.server.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+local_agentic_rag = ["server/static/*"]
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)
