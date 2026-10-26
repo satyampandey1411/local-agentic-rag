@@ -7,15 +7,15 @@ Colab T4 GPU (15 GB VRAM).
 ## 1. End-to-end flow
 
 ```
-                      INGEST (once per PDF, cached by sha256 + config)
+                      INGEST (once per PDF, streaming, resumable; see section 1b)
  ┌──────────┐   ┌──────────────────────────────┐   ┌───────────────────────┐   ┌─────────────────────┐
- │ PDF file │──►│ PyMuPDF parse                │──►│ Structure-aware chunks │──►│ DocumentIndex        │
- └──────────┘   │ • column-aware reading order │   │ • ≤320 embedder tokens │   │ • BGE-base vectors   │
-                │ • ruled tables → Markdown    │   │ • split at headings,   │   │ • BM25 inverted idx  │
+ │ PDF file │──►│ PyMuPDF parse (worker procs) │──►│ Structure-aware chunks │──►│ Index on disk        │
+ └──────────┘   │ • column-aware reading order │   │ • ≤320 embedder tokens │   │ • BGE-M3 fp16 vectors│
+                │ • ruled tables → Markdown    │   │ • split at headings,   │   │ • BM25 sparse matrix │
                 │ • whitespace tables → rows   │   │   paragraphs, sentences│   │ • chunks + metadata  │
-                │   "label | 2025 Q2 = 3.8"    │   │ • never cross pages    │   │ (saved to disk)      │
+                │   "label | 2025 Q2 = 3.8"    │   │ • never cross pages    │   │ • checkpoint state   │
                 │ • strip running headers      │   │ • "title > section"    │   └─────────────────────┘
-                │ • OCR image-only pages       │   │   header for embedding │
+                │ • OCR image-only / garbled   │   │   header for embedding │
                 └──────────────────────────────┘   └───────────────────────┘
 
                       ASK (per question) — default "adaptive" agent mode
@@ -25,7 +25,7 @@ Colab T4 GPU (15 GB VRAM).
         ▼
  ┌─────────────┐  dense top-30 + BM25 top-30 → Reciprocal Rank Fusion → top-24
  │  RETRIEVE   │  → cross-encoder rerank against the question → top-6               (0 LLM calls)
- └─────┬───────┘
+ └─────┬───────┘  ("page 512" in the question: that page's passages join and keep 3 slots)
        ▼
  quantitative question? ──► CALCULATE: LLM extracts operands + expression (JSON),    (1 LLM call)
                             Python evaluates it safely; result handed to GENERATE
@@ -58,6 +58,75 @@ question. Letting the grader reorder the context also pushed evidence down. Fixe
 (1) rank by the user's question and let sub-queries only *add* their best passage;
 (2) the grader filters but never reorders; (3) spend the loop only on questions whose first
 answer is refused or fails verification. See `docs/RESULTS.md`.
+
+## 1b. Ingesting very long PDFs (100 to 10,000+ pages)
+
+The first design parsed the whole PDF in memory, embedded every chunk in one call and saved
+the index at the end. That works for 60 pages and fails at 10,000: memory grows with the
+document, one malformed page could crash the process, and a Colab disconnect after an hour
+lost everything. Ingestion is now a two-pass stream with checkpoints
+(`ingest/streaming.py`, `ingest/workers.py`):
+
+```
+ PDF ─► pass 1: READ (parallel)                         pass 2: INDEX (in page order)
+        worker processes, 16-page batches        ┌────► strip running headers/footers
+        tables, OCR, text blocks per page        │      (needs the document-wide counts)
+        ──► parsed/<sha>/raw.jsonl  ──── stats ──┘      chunk (section carried across pages)
+            checkpoint after every batch                embed 48-page batches on the GPU
+                                                        ──► chunks.jsonl + vectors.f16
+                                                            checkpoint after every batch
+                                                  final: BM25 sparse matrix, meta.json
+```
+
+* **Why two passes.** Removing running headers needs to know which margin lines repeat on
+  40% of pages (or on 3+ consecutive pages, for per-chapter headers), and heading detection
+  needs the body font size. Both are document-wide counts, collected while pass 1 streams.
+  The output is identical to the in-memory parser; this was checked chunk by chunk on every
+  benchmark PDF.
+* **Bounded memory.** Pass 1 keeps at most two batches per worker in flight; pass 2 holds one
+  48-page batch. Vectors go to disk as float16 as they are produced.
+* **Resumable.** Each pass appends to its files, fsyncs, then atomically replaces a
+  `state.json` checkpoint. A crash, a cancelled job or a closed notebook resumes from the last
+  checkpoint; files are truncated to the checkpointed byte offsets, so a half-written batch
+  is discarded. Tested by killing jobs mid-way and comparing with a clean run.
+* **Crash-isolated parsing.** Pages are parsed by `python -m local_agentic_rag.ingest.workers`
+  subprocesses speaking JSON lines, one reply per page. A page that crashes MuPDF or hangs
+  past its time budget kills only its worker: that page becomes an empty page with a warning,
+  the worker restarts and the batch continues. (`multiprocessing` was rejected: `spawn`
+  re-runs the caller's script in every worker, `fork` copies CUDA and server threads.)
+* **Shared parse.** Parsed pages are keyed by the PDF hash and the parse settings, so an
+  ablation that only changes the embedder or chunk size re-indexes without re-parsing.
+* **Search at scale.** The vectors stay a flat matrix: about 40,000 chunks × 1,024 dims is
+  160 MB in float32 and one exact dot product per query. FAISS would only add approximation:
+  only its flat indexes are exact, and IVF needs more training vectors than one document
+  has. BM25 is a precomputed CSC sparse matrix (a query sums a few columns), loaded from
+  disk instead of re-tokenising.
+* **Pages named in the question.** "What does page 4,512 say about…": page numbers are
+  stripped from the text as running footers, so neither retriever could find that page. The
+  question's page references (`page 12`, `pp. 4-6`, `पृष्ठ 7`) pull that page's passages into
+  the candidate pool. The best three by reranker score keep their slots.
+
+## 1c. The document library and web app
+
+```
+ browser ──HTTP──► FastAPI (server/app.py) ──► Library (library.py) ──► streaming ingest ─► store/
+   upload (streamed to disk, %PDF check, size limit)      catalog.sqlite (status, progress, errors)
+   SSE progress, page images with the cited passage highlighted, ask (+ live agent steps)
+```
+
+* One background ingestion thread. The GPU embeds one document at a time, and the parse
+  workers already use every core. Documents left queued or processing when the server
+  stopped are re-queued at start-up and resume from their checkpoint.
+* Questions are answered while a long document is ingesting. The embedder and reranker are
+  shared behind one lock, held for a single encode/score call, so a question waits at most
+  one 48-page batch, never the whole document.
+* At most `--max-concurrent-asks` answers run at once (default 2); further users wait in a
+  first-come queue and see their position. A timed-out answer returns 504 to the client,
+  while its GPU slot stays held until the work really ends.
+* A citation chip opens the page rendered by PyMuPDF with the cited passage highlighted (the
+  passage is cut into sentence pieces, or table body cells, and searched on the page).
+* Uploads, indexes and the catalog live under one directory (`--library`). Deleting a
+  document removes its file, parsed pages and index.
 
 ## 2. Why each component exists (and what it replaced)
 
@@ -102,7 +171,7 @@ languages is bounded by Qwen2.5-7B; OCR quality depends on scan quality and the 
 | bge-reranker-v2-m3 (fp16) | ~1.1 GB |
 | **Total** | **~7 GB**, leaving room for longer contexts or a 14B model at Q4 |
 
-Measured peak: 6.9 GB VRAM. Host RAM, not VRAM, is the binding limit. Ollama's
+Measured peak: 6.9 GB VRAM. Long documents do not change this: the embedder and reranker used 2.4 GB of CUDA memory at every size from 100 to 10,000 pages, and a 10,000-page index is 188 MB on disk (SCALE.md). Host RAM, not VRAM, is the binding limit. Ollama's
 model runner was measured leaking about 100 MB of anonymous memory per request,
 and under memory pressure it also disables mmap and copies the 4.7 GB model into RAM.
 The kernel OOM-killer then took down the notebook. Mitigations, all in the code:
@@ -118,8 +187,10 @@ src/local_agentic_rag/
   config.py          RAGConfig (every tunable) + ablation presets
   schema.py          Chunk, ScoredChunk, Answer, Citation, TraceStep, IngestReport
   ingest/pdf.py      PyMuPDF parsing, reading order, headers/footers, OCR, table detection
+  ingest/workers.py  crash-isolated parse worker processes (JSON lines, per-page timeouts)
+  ingest/streaming.py two-pass, checkpointed, resumable ingestion → on-disk index
   ingest/tables.py   whitespace-table reconstruction from word coordinates
-  ingest/chunker.py  token-aware, heading-aware, page-bound chunking
+  ingest/chunker.py  token-aware, heading-aware, page-bound chunking (PageChunker)
   retrieval/         embedder, bm25, index (cache), hybrid (RRF + rerank), reranker
   llm/               LLM interface; Ollama, llama.cpp and scripted (test) backends
   agent/             prompts, citations, calculator tool, the AgenticRAG loop (adaptive / full)
@@ -127,12 +198,19 @@ src/local_agentic_rag/
   eval/              dataset loader, metrics, resumable runner, markdown reports
   bench.py           retrieval + answer ablations (CLI: python -m local_agentic_rag.bench)
   colab.py, app.py   Colab helpers (Ollama setup, HTML answer rendering), Gradio chat UI
+  library.py         document library: catalog, background ingestion queue, ask, page images
+  library_types.py   the contract between the library and the web server
+  server/            FastAPI app + offline single-page frontend (python -m local_agentic_rag.server)
 ```
 
 ## 5. Failure handling
 
 * Unreadable / encrypted / empty / image-only PDFs raise `PDFParseError` with a
-  message telling the user what to do. One bad page never fails a document.
+  message telling the user what to do. One bad page never fails a document: a page that
+  raises, crashes its parse worker or exceeds its time budget becomes an empty page with a
+  warning in the ingest report.
+* Interrupted ingestion (crash, cancel, restart, disconnect) resumes from its last
+  checkpoint; see section 1b.
 * Any structured agent step that returns invalid JSON falls back to the simpler
   behaviour (e.g. no planner → search with the raw question).
 * LLM server failures surface as `Answer.error` with a friendly message. The

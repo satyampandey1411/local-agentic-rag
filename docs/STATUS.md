@@ -1,7 +1,25 @@
-# Project status — 2026-10-26 (after the Kaggle validation round)
+# Project status — 2026-10-26 (after the scale round)
 
 Honest snapshot of what is implemented, what is verified and how, and what is
 still outstanding.
+
+## Scale round (2026-10-26, evening)
+
+Goal: a product that handles PDFs of 100 to 10,000 pages, for several users, with failure
+recovery, measured on the target GPU. Details and every number: [SCALE.md](SCALE.md).
+
+| Area | State | Evidence |
+|---|---|---|
+| Streaming, resumable ingestion (two passes, checkpoints, bounded memory) | ✅ measured | 100–10,000-page tiers ingested on a T4; output identical to the in-memory parser on every benchmark PDF; resume after interruption at every tier |
+| Crash-isolated parse workers (per-page timeouts, restart, empty-page fallback) | ✅ measured | a killed worker cost exactly one page at every tier; hang and crash unit tests |
+| Persistent index (fp16 vectors, BM25 sparse matrix on disk) | ✅ measured | 188 MB and 0.7 s cold load at 10,000 pages; BM25 0.6 ms vs 27 ms per query at 40k chunks, identical rankings |
+| Document library + web app (upload, background queue, progress, citations with highlighted source pages, delete/retry, several users) | ✅ measured | 0 failures with 1–8 concurrent users on a T4; visual QA in Chrome with fake models; review-found races fixed with regression tests |
+| Page and section references in questions ("page 4,512", "section 7203") | ✅ page / ⚠️ section | page questions rank 3–4 instead of 87–895 before reranking; section routing neutral on the US Code (headings not identified in that PDF) |
+| Garbled text layers → OCR; per-chapter running headers removed | ✅ unit-tested | no change on the benchmark PDFs except 8 BEA chunks losing a repeated date |
+| Independent evaluation: synthetic corpus (240 questions over 6 tiers) and real PDFs (46 questions) | ✅ | written by separate agents that did not see the existing benchmark or its failures |
+| Notebook (streaming ingest with progress line, web-app cell) | ✅ | executed top to bottom on a Kaggle T4 (one card) in 32.7 min, no errors |
+
+Test suite: **571 passed** (`pytest -q`), `ruff check` clean.
 
 ## Implemented and verified
 
@@ -85,6 +103,21 @@ not distinguished by script detection. The multilingual set is 20 questions, sin
 * Full answer-level ablation: see `docs/RESULTS.md` §3.
 
 ## Outstanding / known limitations
+
+0. **Scale round findings** (see SCALE.md):
+   - Ingestion of table-heavy PDFs is slow on 2 CPUs: about 2.3–2.9 pages/s (10,000 pages ≈ 71 min;
+     the Budget Appendix 1,224 pages ≈ 34 min). PyMuPDF's ONNX table model is ~80% of it; the
+     faster line-only detector invents tables in academic papers, so it is not used.
+   - Long legal codes: questions naming a section ("section 7203") still fail on the US Code; the
+     section headings of that PDF are not yet identified.
+   - Questions that presuppose something absent from the document (an act passed after it was
+     written) are sometimes answered from the nearest related passage: 6/9 unanswerable real-document
+     questions refused.
+   - "Which table…" answers sometimes omit the table number although the right table is retrieved.
+   - Questions cannot be asked about a document while it is still being ingested (other documents
+     can be queried).
+   - The phone-width layout of the web app was checked with a headless DOM test, not visually.
+   - The synthetic corpus is template prose; real documents were limited to four US federal PDFs.
 
 1. **The benchmark is small** (61 questions, single annotator). Grading uses
    alias matching, which can under-credit paraphrased numbers. CIs are reported

@@ -3,6 +3,20 @@
 All numbers come from code in this repository and can be reproduced. Section 4
 lists the exact commands.
 
+## 00. Long documents, real documents and several users (2026-10-26, evening)
+
+Full tables and method: [SCALE.md](SCALE.md). All measured on a Kaggle Tesla T4, one GPU per process.
+
+| Measurement | Result |
+|---|---|
+| Synthetic PDFs, 100 → 10,000 pages, 40 independent questions each | answer accuracy 0.750 → 0.722 (answerable), page recall@5 0.972 → 0.889, answer p50 6.5 → 6.4 s |
+| Ingestion, 10,000 pages (58% table pages), 2 parse workers | 71 min (2.3 pages/s), 53,862 chunks, index 188 MB, cold load 0.7 s, retrieval GPU memory 2.4 GB |
+| Failure recovery at every tier (killed worker + job interrupted half-way) | resumed from the checkpoint; index identical to a clean run except the crashed page; +1.4% total time at 10,000 pages |
+| Real PDFs (9/11 Report, Statistical Abstract, US Code Title 26; 46 independent questions) | 26/37 answerable correct (70%), 6/9 unanswerable refused; US Code weakest (6/12) |
+| Web server, 1–8 concurrent users | 0 failed requests; about 10.5 answers/min on one T4; p50 latency 13 s (1 user) → 45 s (8 users, queueing) |
+| This benchmark (section 0) on the new architecture | English 76.9% with the same 12 failures, multilingual 94.4%: no regression |
+| Project notebook, top to bottom on one T4, with the new progress line and web-app cell | completed in 32.7 min with no errors; same 12/61 English failures |
+
 ## 0. Final validation (2026-10-26): the project notebook, top to bottom, on a T4
 
 Colab's free GPU quota was used up by the earlier runs, so the final runs used a **Kaggle

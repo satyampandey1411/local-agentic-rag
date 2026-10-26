@@ -28,7 +28,10 @@ PDF ─► PyMuPDF (reading order, tables, header/footer strip, OCR eng+hin+mar)
 * **Robust ingestion:** two-column papers, ruled tables and whitespace-aligned
   statistical tables (rebuilt cell-by-cell), running headers, scanned pages (OCR).
 * **Measured:** a 61-question hand-verified benchmark over 3 public PDFs, with
-  retrieval and end-to-end ablations against the original baseline.
+  retrieval and end-to-end ablations against the original baseline; a scale benchmark from
+  100 to 10,000 pages; and an independent question set on four long real PDFs.
+* **Built for long documents:** streaming, checkpointed ingestion with crash-isolated parse
+  workers, an on-disk index, and a web app with a background processing queue.
 
 ![Chat UI running on a free Colab T4](docs/img/chat_ui_colab_t4.png)
 
@@ -46,6 +49,33 @@ runtime type → T4 GPU**, and run the cells in order. The notebook:
 1. installs the package and starts an Ollama server with `qwen2.5:7b-instruct`,
 2. lets you upload a PDF and ask questions (with a Gradio chat UI),
 3. optionally reproduces the benchmark.
+
+## Web app (document library)
+
+A browser app for real use: upload PDFs of any length, watch them process in the background,
+ask questions across any subset of documents, and click a citation to see the source page
+with the cited passage highlighted.
+
+```bash
+pip install -e ".[web]"
+ollama serve & ollama pull qwen2.5:7b-instruct          # the local LLM
+python -m local_agentic_rag.server --library ~/rag-library --port 8000
+# open http://127.0.0.1:8000/
+```
+
+* **Large PDFs:** uploads stream to disk (default limit 2 GB). Processing runs in a
+  background queue with live progress, page counts and an ETA. A 10,000-page PDF is read by
+  parallel, crash-isolated worker processes and indexed in checkpointed batches. If the
+  server stops, the job resumes from its last checkpoint on restart.
+* **Several users:** answers run with a configurable concurrency limit
+  (`--max-concurrent-asks`, default 2 for one GPU); others queue and see their position.
+  Questions can be asked while another document is still processing.
+* **Sources you can check:** every answer has citation chips (`[1] p.42`) that open the
+  rendered page with the passage highlighted, plus a "how this answer was found" trace.
+* **Private:** everything runs locally; it listens on 127.0.0.1 unless you pass `--host`.
+* In Colab, the notebook's section 7b starts the same app through Colab's private port proxy.
+* `python -m local_agentic_rag.server --demo` runs the interface with a fake backend
+  (no GPU or LLM needed), for trying the UI.
 
 ## Quick start (Python)
 
@@ -74,6 +104,20 @@ follow = pipe.ask("And in 2023?", history=[("What was revenue growth in 2024?", 
 The final runs used a Kaggle notebook with the same GPU (Tesla T4, pinned to one card) because the
 free Colab GPU quota was used up; the notebook itself is unchanged and targets Colab.
 
+**Long documents and several users** (Kaggle T4, details in [docs/SCALE.md](docs/SCALE.md)):
+
+| | 100 pages | 1,000 pages | 10,000 pages |
+|---|---:|---:|---:|
+| Ingestion (2 parse workers, table-heavy synthetic PDF) | 55 s | 5.7 min | 71 min |
+| Page recall@5 / answer accuracy (40 independent questions per size) | 0.97 / 0.75 | 0.94 / 0.72 | 0.89 / 0.72 |
+| Answer latency p50 | 6.5 s | 5.9 s | 6.4 s |
+| Index on disk / cold load | 2 MB / 0.0 s | 19 MB / 0.1 s | 188 MB / 0.7 s |
+
+A crashed parse worker costs one page; an interrupted job resumes from its checkpoint (tested at
+every size). On real PDFs (9/11 Report, Statistical Abstract 2012, US Code Title 26) with 46
+independently written questions: 26/37 answerable correct, 6/9 unanswerable refused. The web app
+served 1–8 concurrent users with no failed request (about 10.5 answers per minute on one T4).
+
 A 4-page progress report with the architecture, benchmarks and plan is in [report/](report/Local_Agentic_RAG_Progress_Report.pdf).
 Details, confidence intervals, per-category and per-language breakdowns: [docs/RESULTS.md](docs/RESULTS.md).
 
@@ -86,6 +130,24 @@ python -m local_agentic_rag.bench answer --llm ollama:qwen2.5:7b-instruct
 # multilingual set (Hindi / Marathi / Hinglish / OCR)
 python -m local_agentic_rag.bench answer --benchmark-dir benchmark/multilingual --configs agentic agentic_en
 ```
+
+### Scale benchmark (100 to 10,000 pages)
+
+```bash
+python benchmark/scale/make_corpus.py --pages all --out local/scale/corpus   # synthetic, with planted facts
+python benchmark/scale/run_scale.py --tiers 100 250 1000 2500 5000 10000 \
+    --llm ollama:qwen2.5:7b-instruct --recovery --out local/scale/results
+python benchmark/scale/run_realdocs.py --llm ollama:qwen2.5:7b-instruct      # real public-domain PDFs
+python benchmark/scale/load_test.py --url http://127.0.0.1:8000 --users 1 2 4 8 \
+    --questions local/scale/corpus/scale-1000.questions.jsonl
+```
+
+`run_scale.py` measures ingestion time per stage, peak RAM and GPU memory, index size,
+cold-load time, retrieval recall/latency by question type and document depth, answer
+accuracy and citation precision, and failure recovery (a crashed parse worker plus a job
+interrupted half-way and resumed). Every number it writes is measured in that run; tiers not
+run are reported as "not run". See `benchmark/scale/README.md` for what the synthetic corpus
+contains and its limits.
 
 ## Development
 
