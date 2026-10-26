@@ -407,3 +407,127 @@ def test_end_to_end_modes_find_relevant_chunk(mode):
     assert out[0].chunk.chunk_id == "doc-p1-c1"
     assert out[0].rerank_score == pytest.approx(1.0)
     assert len(out) <= 2
+
+
+# ---------------------------------------------------------------------------
+# Explicit page references
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("question", "pages"),
+    [
+        ("What does page 4,512 say about rail?", [4512]),
+        ("Summarise pp. 10-12", [10, 11, 12]),
+        ("पृष्ठ 7 पर क्या लिखा है", [7]),
+        ("In 2024, pages 3 and 4", [3, 4]),
+        ("page 5000 to 5100", [5000, 5001, 5002, 5003, 5004]),
+        ("What happened in 2019?", []),
+        ("the 3-page summary", []),
+        ("homepage 12", []),
+        ("Compare page 12 and 40", [12, 40]),
+        ("pages 3,4 and 5", [3, 4, 5]),
+        ("page 12 and the summary", [12]),
+        ("pages 1,200-1,202", [1200, 1201, 1202]),
+        ("page-level citations", []),
+        ("Table 7.3 on p. 88", [88]),
+    ],
+)
+def test_page_refs(question, pages):
+    from local_agentic_rag.retrieval.hybrid import page_refs
+
+    assert page_refs(question) == pages
+
+
+def test_named_page_joins_the_candidate_pool():
+    emb = FakeEmbedder()
+    items = [(p, f"Filler paragraph number {p} about routine matters.") for p in range(1, 40)]
+    index = make_index(items, emb)
+    cfg = RAGConfig(retrieval_mode="hybrid", candidates_per_retriever=3, reranker_model=None)
+    fused = HybridRetriever(cfg, emb, None).fuse(["What does page 27 say?"], [index])
+    assert 27 in [sc.chunk.page for sc in fused[:5]]
+    for page in (13, 38):
+        fused = HybridRetriever(cfg, emb, None).fuse([f"Summarise page {page}"], [index])
+        assert page in [sc.chunk.page for sc in fused[:5]]
+
+
+# ---------------------------------------------------------------------------
+# Named sections ("section 7203")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("question", "refs"),
+    [
+        ("What does section 164(b)(6) limit?", ["164"]),
+        ("Under § 7203, what penalties apply?", ["7203"]),
+        ("see Section 2.1 of the profile", ["2.1"]),
+        ("What does sec. 6501(a) say?", ["6501"]),
+        ("the Population section of the abstract", []),
+        ("sections of the report", []),
+    ],
+)
+def test_section_refs(question, refs):
+    from local_agentic_rag.retrieval.hybrid import section_refs
+
+    assert section_refs(question) == refs
+
+
+def _code_index(emb):
+    """A tax-code-like document: many look-alike penalty sections, numbers only in headings."""
+    from dataclasses import replace
+
+    items, sections = [], []
+    for n, sec in enumerate(
+        [
+            "§7201. Attempt to evade",
+            "§7202. Willful failure to collect",
+            "§7203. Willful failure to file",
+            "§7204. Fraudulent statements",
+        ]
+    ):
+        for k in range(4):
+            items.append(
+                (
+                    n * 4 + k + 1,
+                    f"Any person who willfully fails shall be fined not more than ${(n + 1) * 25},000 or imprisoned, clause {k}.",
+                )
+            )
+            sections.append(sec if k == 0 else "(b) Penalties")
+    chunks = [replace(c, section=s) for c, s in zip(make_chunks(items), sections, strict=True)]
+    return DocumentIndex("doc", "", chunks, emb.encode_passages([c.embed_text for c in chunks]))
+
+
+def test_section_chunks_follow_the_last_numbered_heading():
+    index = _code_index(FakeEmbedder())
+    assert [index.chunks[i].page for i in index.section_chunks("7203")] == [9, 10, 11, 12]
+    assert index.section_chunks("720") == [] and index.section_chunks("9999") == []
+
+
+def test_named_section_passages_are_pinned_first():
+    emb = FakeEmbedder()
+    index = _code_index(emb)
+    cfg = RAGConfig(retrieval_mode="hybrid", candidates_per_retriever=3, top_k=4)
+    out = HybridRetriever(cfg, emb, FakeReranker()).retrieve(
+        ["What criminal penalties does section 7203 impose for willful failure?"], [index]
+    )
+    assert {sc.chunk.page for sc in out[:3]} <= {9, 10, 11, 12}
+
+
+def test_inline_section_starts_and_year_headings():
+    """US Code PDFs merge "§ 164. Taxes" into the paragraph; "2010 (I)" is a year, not §2010."""
+    from dataclasses import replace
+
+    items = [
+        (1, "Earlier text. § 164. Taxes (a) General rule Except as otherwise provided"),
+        (1, "(b)(6) Limitation for taxable years 2018 through 2025: $10,000"),
+        (2, "see section 164 and § 221(a)(2)(A), Dec. 19, 2014, 128 Stat. 4037]"),
+        (3, "Interest on bonds"),
+    ]
+    sections = ["§ 163. Interest", "§ 163. Interest", "Editorial Notes", "2010 (I) In general"]
+    chunks = [replace(c, section=s) for c, s in zip(make_chunks(items), sections, strict=True)]
+    emb = FakeEmbedder()
+    index = DocumentIndex("doc", "", chunks, emb.encode_passages([c.embed_text for c in chunks]))
+    assert index.section_chunks("164") == [0, 1, 2, 3]
+    assert index.section_chunks("163") == [0]
+    assert index.section_chunks("221") == [] and index.section_chunks("2010") == []
