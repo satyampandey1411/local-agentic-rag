@@ -1,0 +1,35 @@
+name: tests
+
+# Offline unit tests and lint. Models and the LLM are faked in the tests, so no GPU,
+# model download or Ollama server is needed. GPU benchmarks run separately (docs/RESULTS.md).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,web]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Unit tests
+        run: pytest -q
