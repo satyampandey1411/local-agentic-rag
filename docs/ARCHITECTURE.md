@@ -123,6 +123,25 @@ lost everything. Ingestion is now a two-pass stream with checkpoints
 * At most `--max-concurrent-asks` answers run at once (default 2); further users wait in a
   first-come queue and see their position. A timed-out answer returns 504 to the client,
   while its GPU slot stays held until the work really ends.
+* Answer text streams while it is written. `LLM.chat_stream()` (real `"stream": true` in the
+  Ollama backend; other backends fall back to one chunk) feeds `AgenticRAG.run(on_token=…)`,
+  which streams only the free-text answer generations (never the JSON plan/grade/verify
+  calls) and sends `{"reset": true}` at the start of each one, so a regenerated answer
+  replaces the first. The server batches pieces (at most one per ~50 ms, or 200 characters)
+  into SSE `token` events between `started` and `answer`. Citations, verification and the
+  final text still come only from the `answer` event, which replaces the streamed text.
+  `benchmark/scale/load_test.py` reports `first_token_p50/p95`.
+* A document that is still being indexed becomes askable at its first pass-2 checkpoint.
+  `load_partial_index()` reads only the byte ranges of `chunks.jsonl` and `vectors.f16` named
+  by the atomically replaced `state.json` (data is fsynced before the checkpoint names it),
+  builds BM25 in memory, and never writes. The library caches it apart from the LRU of final
+  indexes and rebuilds it at most every 5 s; answers carry `partial` (pages indexed / total).
+* "Which table/figure…" questions: after the agent finishes, if the answer names no table
+  identifier, the caption line ("Table 12.4: …") of the first cited table chunk is appended
+  with that chunk's citation number. Deterministic, no prompt change, never on refusals.
+* Optional access token (`--token`): every `/api/*` route except `/api/health` needs a Bearer
+  header or an HttpOnly session cookie set by `POST /api/session` (EventSource and `<img>`
+  cannot send headers). One upload per client IP at a time; optional daily byte quota.
 * A citation chip opens the page rendered by PyMuPDF with the cited passage highlighted (the
   passage is cut into sentence pieces, or table body cells, and searched on the page).
 * Uploads, indexes and the catalog live under one directory (`--library`). Deleting a

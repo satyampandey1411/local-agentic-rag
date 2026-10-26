@@ -3,6 +3,14 @@
 All numbers come from code in this repository and can be reproduced. Section 4
 lists the exact commands.
 
+## 000. Sprint run 1 (2026-10-26, late evening, Kaggle T4)
+
+Regression check of the sprint changes (token streaming, ask while processing, "which table" naming,
+access token) with the default agent: **English 76.9%** (the same 12 failures as before; table
+questions 10/12, numerical 2/6), unanswerable 9/9, citation precision 78.4%; **multilingual 94.4%**
+(17/18; Hindi 9/9, Hinglish 3/3, Marathi 4/4). No regression. Streaming: first words after 0.5 s
+(median, one user). Details: [SCALE.md](SCALE.md#sprint-run-1-streaming-ask-while-processing-regression-kaggle-t4-26-oct-late-evening).
+
 ## 00. Long documents, real documents and several users (2026-10-26, evening)
 
 Full tables and method: [SCALE.md](SCALE.md). All measured on a Kaggle Tesla T4, one GPU per process.

@@ -1,0 +1,23 @@
+[
+  {
+    "doc_id": "uscode-2024-title21",
+    "title": "United States Code, 2024 Edition, Title 21 - Food and Drugs",
+    "url": "https://www.govinfo.gov/content/pkg/USCODE-2024-title21/pdf/USCODE-2024-title21.pdf",
+    "approx_pages": 1034,
+    "license_note": "Work of the U.S. Government; not subject to copyright in the United States (17 U.S.C. 105). Questions written from the govinfo HTML edition without the PDF or the system's outputs (see README.md). Download approved by the user on 26 Oct 2026 (Kaggle only)."
+  },
+  {
+    "doc_id": "gao-20-195g",
+    "title": "GAO Cost Estimating and Assessment Guide (GAO-20-195G)",
+    "url": "https://www.gao.gov/assets/d20195G.pdf",
+    "approx_pages": 476,
+    "license_note": "GAO products are not protected by copyright in the United States (gao.gov copyright page). Download approved by the user on 26 Oct 2026 (Kaggle only)."
+  },
+  {
+    "doc_id": "cag-2019-11-gst-hi",
+    "title": "CAG Report No. 11 of 2019 (GST), Hindi edition",
+    "url": "https://d1jmc0u14z2tmp.cloudfront.net/uploads/download_audit_report/2019/Union_Hindi_INDT_CA_11_2019.pdf",
+    "approx_pages": 190,
+    "license_note": "Comptroller and Auditor General of India; reuse terms unclear (site footer: all rights reserved). Used for evaluation only, not redistributed; download approved by the user on 26 Oct 2026 (Kaggle only). Questions from the English edition; scored on answers only (gold pages cannot be located from English quotes)."
+  }
+]

@@ -3,6 +3,33 @@
 Honest snapshot of what is implemented, what is verified and how, and what is
 still outstanding.
 
+## Final sprint progress log (26–31 Oct)
+
+Legend: ✅ verified (tests or a measured run named in the row) · 🔧 in progress · ⏳ planned · ⛔ blocked.
+Nothing in this table is a benchmark result unless a run is named.
+
+| Item | State | Evidence / next action |
+|---|---|---|
+| F1 token streaming (backend + web UI) | ✅ code / ⏳ GPU | merged 26 Oct: Ollama NDJSON streaming, agent `on_token`, SSE `token` events batched every 50 ms, UI renders text then the verified answer; a broken stream falls back to the plain call. Tests pass; demo server sends queued → started → step → token ×18 → answer. Run 1 (T4): first words after 0.47 s median with one user, 0.70 s with two |
+| F2 faster table-heavy ingestion | ✅ measured | prose-page triage could not help (0 of 1,000 pages have lines without a table). Layout model on the GPU (opt-in `LOCAL_RAG_ONNX_GPU=1` + `onnxruntime-gpu[cuda,cudnn]`): run 2 (T4) parse of 1,000 table-heavy pages 224.7 s → 119.0 s (1.89×), byte-identical pages, ~0.7 GB GPU per worker. Notebook gets an opt-in install cell |
+| F5 Docker / one-command install, DEPLOY.md | ✅ files / ⛔ untested build | Dockerfile, compose, smoke script; smoke script passes against the demo server; `docker compose config` valid; images not built (no downloads) |
+| Grader: number words ("Seventeen" = 17) | ✅ | 93 unit tests incl. negatives; old grading tests unchanged |
+| F9 CI workflow | ✅ written / ⏳ | `.github/workflows/ci.yml`; runs only after a push |
+| heldout2 evaluation set | ✅ ready / ⏳ final run | 70 questions written independently of the system (authors read only the official sources): US Code Title 21 (30, from the HTML edition), GAO Cost Guide (22), CAG Hindi GST audit report (18, written in Hindi/Hinglish/English from the English edition; scored on answers only; its 4 unanswerable questions were checked against the executive summary only). PDFs are downloaded only on Kaggle (approved 26 Oct); the PDF copies the web reader cached on the laptop were deleted. Used once, in the final run |
+| F3 ask while ingesting | ✅ code / ⏳ GPU | merged 26 Oct: a processing document is askable after its first indexed batch; answers say "first n of N pages"; final index byte-identical with or without partial queries (test). Run 1 (T4): askable 206 s after upload of a 1,000-page PDF (96 pages indexed); answer correct and cited |
+| F7 token auth, upload limits | ✅ | merged 26 Oct: `--token` (Bearer or HttpOnly session cookie), one upload per client IP, optional daily quota; 32 tests; login form checked in Chrome against the demo server (401 → form → unlocked). No rate limit on token guesses; behind a proxy all users share one IP |
+| F4 US Code section questions | ✅ measured (not held out) | cause: bold section heading directly followed by a bold sub-heading, chunks kept only the latest; fix: chunks carry the last section number (text unchanged). Run 2 (T4): sections identified 355 → 1,877; US Code recall@5 0.75 → 0.92, answerable 6/12 → 7/12, §164/§6501/§7203 now correct. Held-out check on Title 21 in the final run |
+| GPU run 1 (regression + tiers 100/1,000 + streaming load test + partial ask + F4 diagnosis + layout model on GPU) | ✅ done | 26 Oct, 50 min on T4 ×2: English 76.9% (same 12 failures), multilingual 94.4%, tiers 100/1,000 unchanged with recovery passing, partial ask correct at 96/1,000 pages, first words 0.5 s (1 user), 0 failed requests up to 8 users; layout-on-GPU inconclusive (CUDA 13 libs missing). SCALE.md "Sprint run 1" |
+| GPU run 2 (F11, F4, layout model on GPU, two Ollama slots) | ✅ | two-slot load test confounded (a second model copy on the same GPU); default kept. 27 Oct, T4 ×2, notebook `notebook4b1ff5d5fe`; results in SCALE.md "Sprint run 2" |
+| GPU run 3 — FINAL (identity check CPU vs GPU tables; six tiers with recovery; real documents, final use of the 46 questions; held-out set 2, single use; regression) | 🔧 running | started 27 Oct ~00:35 IST, notebook `notebookcd9bf75c36`, code snapshot run3 (diff 433e8647). Code is frozen for measured behaviour from this point |
+| Project notebook top to bottom on a T4 (incl. the GPU table-detection cell) | 🔧 running | notebook `notebook418adfeb08`, same snapshot |
+| Independent code review of the sprint diff | ✅ | 10 findings (27 Oct). 9 fixed with regression tests after the final-run snapshot was taken: chunk section number after an overflow, token/step event order, presupposition refusal flags, no second generation after a timeout, partial-index race and duplicate builds, quota bypass without Content-Length, quota charged for duplicates/rejections, API docs public in token mode. Chunk text identical on the benchmark PDFs. Not fixed: an over-quota upload is reported by the browser as a closed connection (the server answers 413 before reading the body) |
+| Unit suite | ✅ | 843 passed, ruff clean (27 Oct, after the review fixes); 829 at the final-run snapshot |
+| F6 "which table" answers | ✅ code / ⏳ GPU | merged 26 Oct: deterministic, no prompt change; appends the first cited table's caption when the answer omits the number; 40 tests. Effect measured in run 1 (English table questions, synthetic page_ref) |
+| F12 source viewer polish | ✅ code | merged 26 Oct: citation scrolls the source pane to the highlight (seen in Chrome), focus styles, live region announces only the final answer, phone close button; 390 px layout not seen in a browser |
+| F11 presupposition refusals (flag, off by default) | ✅ measured, not adopted | run 2 (T4): English 76.9% with the same failures but false refusals 1.9% → 3.8%; multilingual unchanged. No benefit, stays off |
+| F8 report and docs | 🔧 | report draft rebuilt (5 pages): final framing, users, long-document architecture, 26 Oct scale and real-document tables, limitations; GPU-pending items marked `\pending{}`. `docs/DEMO.md` written. Final numbers after the last run |
+
 ## Scale round (2026-10-26, evening)
 
 Goal: a product that handles PDFs of 100 to 10,000 pages, for several users, with failure
@@ -16,7 +43,7 @@ recovery, measured on the target GPU. Details and every number: [SCALE.md](SCALE
 | Document library + web app (upload, background queue, progress, citations with highlighted source pages, delete/retry, several users) | ✅ measured | 0 failures with 1–8 concurrent users on a T4; visual QA in Chrome with fake models; review-found races fixed with regression tests |
 | Page and section references in questions ("page 4,512", "section 7203") | ✅ page / ⚠️ section | page questions rank 3–4 instead of 87–895 before reranking; section routing neutral on the US Code (headings not identified in that PDF) |
 | Garbled text layers → OCR; per-chapter running headers removed | ✅ unit-tested | no change on the benchmark PDFs except 8 BEA chunks losing a repeated date |
-| Independent evaluation: synthetic corpus (240 questions over 6 tiers) and real PDFs (46 questions) | ✅ | written by separate agents that did not see the existing benchmark or its failures |
+| Independent evaluation: synthetic corpus (240 questions over 6 tiers) and real PDFs (46 questions) | ✅ | written separately by authors who did not see the existing benchmark or its failures |
 | Notebook (streaming ingest with progress line, web-app cell) | ✅ | executed top to bottom on a Kaggle T4 (one card) in 32.7 min, no errors |
 
 Test suite: **571 passed** (`pytest -q`), `ruff check` clean.
@@ -114,9 +141,10 @@ not distinguished by script detection. The multilingual set is 20 questions, sin
      written) are sometimes answered from the nearest related passage: 6/9 unanswerable real-document
      questions refused.
    - "Which table…" answers sometimes omit the table number although the right table is retrieved.
-   - Questions cannot be asked about a document while it is still being ingested (other documents
-     can be queried).
-   - The phone-width layout of the web app was checked with a headless DOM test, not visually.
+   - ~~Questions cannot be asked about a document while it is still being ingested~~: fixed on
+     26 Oct (F3, answers from the indexed pages so far, labelled as partial); unit-tested, T4
+     measurement pending.
+   - The phone-width layout of the web app was checked with CSS/static tests only; a 390 px browser window could not be produced on the test machine (26 Oct).
    - The synthetic corpus is template prose; real documents were limited to four US federal PDFs.
 
 1. **The benchmark is small** (61 questions, single annotator). Grading uses

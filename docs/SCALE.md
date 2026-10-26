@@ -26,6 +26,81 @@ next to it. Tiers or documents that were not run are marked as such; nothing is 
   Throughput saturates at about 10.5 answers per minute with two answers running at a time on
   one T4; beyond that, users queue.
 
+## Sprint run 2: legal sections, table detection on the GPU, presupposition check (Kaggle T4, 27 Oct)
+
+**Section numbers on chunks (US Code Title 26).** The diagnosis (all 4,211 pages through the real parser)
+showed why "section 164" questions failed: in this PDF a bold section heading ("§ 164. Taxes") is
+followed directly by a bold sub-heading ("(a) General rule"), and each chunk kept only the latest
+heading, so the section number never reached the index. The PDF has no bookmarks to fall back on. Chunks
+now carry the number of the last numbered section as a separate field (chunk text and embeddings are
+unchanged, verified identical on the 7 development PDFs).
+
+| US Code Title 26, 15 questions | Before (run v4) | After |
+|---|---:|---:|
+| Sections identified in the index | 355 | 1,877 |
+| Page recall@5 / MRR (12 located questions) | 0.75 / 0.52 | 0.92 / 0.73 |
+| Answerable correct | 6 / 12 | 7 / 12 |
+| Unanswerable refused | 2 / 3 | 2 / 3 |
+| Citation precision | 0.62 | 0.78 |
+
+Section questions on §164, §6501 and §7203 are now answered correctly. This document was used to find
+the cause, so it is not a held-out test of the fix; the final run measures it on a new legal code
+(US Code Title 21) whose questions were written without the system.
+
+**Table detection on the GPU (opt-in, `LOCAL_RAG_ONNX_GPU=1`).** With the GPU build of ONNX Runtime
+installed, the parse workers run PyMuPDF's layout model on the T4, which is idle while pages are read.
+Parsing the 1,000-page table-heavy PDF with 2 workers took **119.0 s instead of 224.7 s (1.89×)**, and
+the parsed pages were byte-identical (same digest, 660 tables in both). Each parse worker used about
+0.7 GB of GPU memory. (Run 1's attempt ran on the CPU in both settings because the CUDA libraries were
+missing; they now come from the `onnxruntime-gpu[cuda,cudnn]` extras.)
+
+**Two Ollama slots: inconclusive.** A load test with `OLLAMA_NUM_PARALLEL=2` was slower (3 to 6
+answers per minute against 10 to 14 with one slot), but another job's copy of the model was still
+loaded on the same GPU, so the two servers competed for memory. The comparison is not fair and the
+default (one slot, two answers at a time in the server) is kept.
+
+**Presupposition check (F11, off by default).** With the check on, the English set scored the same
+76.9% with the same 12 failures, but one more answerable question was refused (false refusals 1.9% →
+3.8%); the multilingual set was unchanged. It brought no measured benefit, so it stays off.
+
+## Sprint run 1: streaming, ask-while-processing, regression (Kaggle T4, 26 Oct, late evening)
+
+Code: the 26 Oct sprint changes (token streaming, ask while processing, "which table" naming, access
+token, number-word grader; layout model on GPU available but off). One T4 ran the regression
+benchmark while the other ran the tiers below, sharing 4 vCPUs.
+
+| Pages | Ingest | Recall@5 | Answer acc. | Refusal | Citation precision | Answer p50 | Recovery |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 100 | 51 s | 0.972 | 0.750 | 4/4 | 0.917 | 5.8 s | crash isolated, resumed at page 64, identical |
+| 1,000 | 435 s | 0.944 | 0.722 | 3/4 | 0.815 | 5.5 s | crash isolated, resumed at page 512, identical |
+
+Retrieval and answer quality are the same as run v1 at both sizes. The 1,000-page ingest was slower
+than in run v1 (435 s against 340 s) because the regression job shared the CPUs: the same PDF took
+276 s through the web server once that job had finished, and 212 s to parse alone. The default
+parsing code path did not change.
+
+**Ask while processing.** The 1,000-page PDF was uploaded to the web server. It became askable
+206 s after upload, with 96 of 1,000 pages indexed. A question about page 14 was answered correctly
+in 14.8 s, citing page 14, and the answer was labelled as drawn from the first 96 of 1,000 pages.
+
+**Load test with streaming answers** (same server and document, two answers at a time, one Ollama
+slot, 3 questions per user, no failed request at any level):
+
+| Users | Latency p50 / p95 | Queue wait p50 | First words p50 / p95 | Answers per minute |
+|---:|---:|---:|---:|---:|
+| 1 | 5.6 / 8.9 s | 0 s | 0.5 / 6.8 s | 10.4 |
+| 2 | 6.4 / 14.1 s | 0 s | 0.7 / 8.3 s | 14.4 |
+| 4 | 20.8 / 33.3 s | 6.8 s | 13.7 / 23.6 s | 10.9 |
+| 8 | 40.9 / 51.7 s | 28.1 s | 31.5 / 42.5 s | 11.7 |
+
+With one or two users the first words appear in under a second (median). Beyond two users,
+questions wait in the queue, so the first words arrive later; throughput stays at 10 to 14 answers
+per minute on one T4. The `scripts/smoke_install.sh` check passed against this server.
+
+**Layout model on the GPU (opt-in): not measured.** The installed GPU build of ONNX Runtime needed
+CUDA 13 libraries that the image did not have, so both settings ran on the CPU (212 s and 211 s for
+1,000 pages, identical output). This is recorded as inconclusive.
+
 ## Synthetic tiers (Kaggle T4, run v1, 2026-10-26)
 
 Each process pinned to one T4 with 2 parse workers. Answers use the default adaptive agent.

@@ -41,6 +41,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and rationale,
 [docs/RESULTS.md](docs/RESULTS.md) for benchmark numbers, and
 [docs/STATUS.md](docs/STATUS.md) for what is done and what is outstanding.
 
+## Install
+
+`docker compose up --build` starts the web app, Ollama and the model on a GPU machine (app on
+`http://127.0.0.1:8000`); `scripts/smoke_install.sh` checks an install end to end.
+[docs/DEPLOY.md](docs/DEPLOY.md) has requirements, the pip + Ollama path, options and the
+security notes (single-user, localhost only by default).
+
 ## Quick start (Colab)
 
 Open `notebooks/Local_Agentic_RAG.ipynb` in Colab, select **Runtime → Change
@@ -70,9 +77,20 @@ python -m local_agentic_rag.server --library ~/rag-library --port 8000
 * **Several users:** answers run with a configurable concurrency limit
   (`--max-concurrent-asks`, default 2 for one GPU); others queue and see their position.
   Questions can be asked while another document is still processing.
+* **Ask before processing finishes:** once the first batch of a long PDF is indexed, it can
+  be questioned. The answer says how many pages it was drawn from ("answered from the first
+  n of N pages").
+* **Streaming answers:** the answer appears word by word, then is replaced by the verified
+  answer with its citations.
 * **Sources you can check:** every answer has citation chips (`[1] p.42`) that open the
   rendered page with the passage highlighted, plus a "how this answer was found" trace.
+  "Which table…" answers name the cited table's printed number.
 * **Private:** everything runs locally; it listens on 127.0.0.1 unless you pass `--host`.
+  `--token` (or `LOCAL_RAG_TOKEN`) requires an access token for every API call, and uploads
+  are limited per client address; see [docs/DEPLOY.md](docs/DEPLOY.md).
+* **Faster tables on a GPU (opt-in):** `LOCAL_RAG_ONNX_GPU=1` runs table detection on the GPU
+  (1.9x faster parsing of table-heavy PDFs on a T4); needs `onnxruntime-gpu`, see
+  [docs/DEPLOY.md](docs/DEPLOY.md#faster-table-detection-on-a-gpu).
 * In Colab, the notebook's section 7b starts the same app through Colab's private port proxy.
 * `python -m local_agentic_rag.server --demo` runs the interface with a fake backend
   (no GPU or LLM needed), for trying the UI.
