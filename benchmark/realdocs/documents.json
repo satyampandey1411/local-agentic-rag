@@ -1,0 +1,30 @@
+[
+  {
+    "doc_id": "budget-2026-appendix",
+    "title": "Budget of the U.S. Government, Fiscal Year 2026, Appendix",
+    "url": "https://www.govinfo.gov/content/pkg/BUDGET-2026-APP/pdf/BUDGET-2026-APP.pdf",
+    "approx_pages": 1224,
+    "license_note": "Work of the U.S. Government (Office of Management and Budget); not subject to copyright in the United States under 17 U.S.C. 105. No questions in questions.jsonl yet: govinfo and whitehouse.gov publish this volume only as PDF, so it could not be read under the no-PDF authoring rule (see README)."
+  },
+  {
+    "doc_id": "uscode-2023-title26",
+    "title": "United States Code, 2023 Edition, Title 26 - Internal Revenue Code",
+    "url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title26/pdf/USCODE-2023-title26.pdf",
+    "approx_pages": 4211,
+    "license_note": "Work of the U.S. Government (Office of the Law Revision Counsel / GPO); not subject to copyright in the United States under 17 U.S.C. 105."
+  },
+  {
+    "doc_id": "statab-2012",
+    "title": "Statistical Abstract of the United States: 2012 (131st Edition)",
+    "url": "https://www2.census.gov/library/publications/2011/compendia/statab/131ed/2012-statab.pdf",
+    "approx_pages": 1040,
+    "license_note": "Work of the U.S. Government (U.S. Census Bureau); not subject to copyright in the United States under 17 U.S.C. 105. Some tables reproduce data from non-federal sources, which may carry their own terms; questions here use only table titles and section introductions."
+  },
+  {
+    "doc_id": "gpo-911report",
+    "title": "The 9/11 Commission Report: Final Report of the National Commission on Terrorist Attacks Upon the United States",
+    "url": "https://www.govinfo.gov/content/pkg/GPO-911REPORT/pdf/GPO-911REPORT.pdf",
+    "approx_pages": 585,
+    "license_note": "Work of the U.S. Government (National Commission on Terrorist Attacks Upon the United States, published by GPO); not subject to copyright in the United States under 17 U.S.C. 105."
+  }
+]
