@@ -10,6 +10,7 @@ from local_agentic_rag.agent import calculator as C
 from local_agentic_rag.schema import ANSWER_NOT_FOUND
 from tests.helpers import scripted
 from tests.test_agent import VERIFY_OK, cite, index, make_agent, steps  # noqa: F401
+from tests.test_calculator import revenue_index  # noqa: F401
 
 
 def v(*nums, passage=1):
@@ -95,7 +96,7 @@ CALC_REPLY = json.dumps(
 )
 
 
-def test_ignored_calculation_is_appended_with_citation(index):  # noqa: F811
+def test_ignored_calculation_is_appended_with_citation(revenue_index):  # noqa: F811
     agent, _ = make_agent(
         scripted(
             calculate=CALC_REPLY,
@@ -104,13 +105,13 @@ def test_ignored_calculation_is_appended_with_citation(index):  # noqa: F811
         ),
         agent_mode="adaptive",
     )
-    ans = agent.run("By how much did revenue increase from 2022 to 2023?", [index])
+    ans = agent.run("By how much did revenue increase from 2022 to 2023?", [revenue_index])
     assert "(Calculated: |4.2 - 3.5| = 0.7 billion dollars. [1])" in ans.answer
     assert "calc_appended" in steps(ans)
     assert 1 in [c.marker for c in ans.citations]
 
 
-def test_no_append_when_answer_states_result_or_refuses(index):  # noqa: F811
+def test_no_append_when_answer_states_result_or_refuses(revenue_index):  # noqa: F811
     agent, _ = make_agent(
         scripted(
             calculate=CALC_REPLY,
@@ -119,7 +120,9 @@ def test_no_append_when_answer_states_result_or_refuses(index):  # noqa: F811
         ),
         agent_mode="adaptive",
     )
-    assert "Calculated" not in agent.run("By how much did revenue increase?", [index]).answer
+    assert (
+        "Calculated" not in agent.run("By how much did revenue increase?", [revenue_index]).answer
+    )
     agent2, _ = make_agent(
         scripted(
             calculate=CALC_REPLY,
@@ -130,5 +133,5 @@ def test_no_append_when_answer_states_result_or_refuses(index):  # noqa: F811
         ),
         agent_mode="adaptive",
     )
-    refused = agent2.run("By how much did revenue increase?", [index])
+    refused = agent2.run("By how much did revenue increase?", [revenue_index])
     assert refused.refused and "Calculated" not in refused.answer

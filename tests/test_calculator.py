@@ -7,8 +7,31 @@ import json
 import pytest
 
 from local_agentic_rag.agent import calculator as C
-from tests.helpers import scripted
-from tests.test_agent import VERIFY_OK, cite, index, make_agent, steps, user_prompts  # noqa: F401
+from tests.helpers import FakeEmbedder, make_index, scripted
+from tests.test_agent import (  # noqa: F401
+    CORPUS,
+    VERIFY_OK,
+    cite,
+    index,
+    make_agent,
+    steps,
+    user_prompts,
+)
+
+# CORPUS with both revenue figures stated, so calculator operands are grounded.
+REVENUE_CORPUS = [
+    (
+        3,
+        "Revenue increased to 4.2 billion dollars in fiscal 2023 from 3.5 billion dollars in "
+        "fiscal 2022, driven by cloud subscriptions.",
+    ),
+    *CORPUS[1:],
+]
+
+
+@pytest.fixture
+def revenue_index():
+    return make_index(REVENUE_CORPUS, FakeEmbedder(), doc_id="rep", title="Annual Report")
 
 
 @pytest.mark.parametrize(
@@ -117,7 +140,7 @@ def test_format_number_precision():
     assert C.format_number(18.0) == "18"
 
 
-def test_agent_uses_calculator_hint_for_quantitative_question(index):  # noqa: F811
+def test_agent_uses_calculator_hint_for_quantitative_question(revenue_index):
     question = "By how much did revenue increase from fiscal 2022 to fiscal 2023?"
     calc_reply = json.dumps(
         {
@@ -138,7 +161,7 @@ def test_agent_uses_calculator_hint_for_quantitative_question(index):  # noqa: F
         ),
         agent_mode="adaptive",
     )
-    ans = agent.run(question, [index])
+    ans = agent.run(question, [revenue_index])
     assert steps(ans) == ["retrieve", "calculate", "generate", "verify"]
     assert "4.2 - 3.5 = 0.7 billion dollars" in user_prompts(llm, "generate")[0]
 

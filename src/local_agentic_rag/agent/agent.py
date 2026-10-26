@@ -145,7 +145,8 @@ class AgenticRAG:
             ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
             self._record(ans, "refuse", {"reason": "no passages retrieved"}, 0.0)
             return
-        calc_hint = self._calculate(ans, standalone, first)
+        calc_hint, first = self._calculate(ans, standalone, first, indexes)
+        ans.retrieved = first
         self._generate(ans, first, feedback=calc_hint, question=standalone)
         self._ensure_calc_in_answer(ans)
         if not ans.refused and cfg.use_verifier:
@@ -198,7 +199,7 @@ class AgenticRAG:
         if ans.unsupported_claims:
             feedback = P.REGENERATE_FEEDBACK.format(claims="; ".join(ans.unsupported_claims)[:500])
         if calc_hint or calculator.is_quantitative(standalone):
-            calc_hint = self._calculate(ans, standalone, context)
+            calc_hint, context = self._calculate(ans, standalone, context, indexes)
             feedback = "\n".join(f for f in (feedback, calc_hint) if f)
         ans.answer_attempts = 2
         ans.retrieved = context
@@ -295,7 +296,8 @@ class AgenticRAG:
             return
 
         # 3. GENERATE ⇄ VERIFY ----------------------------------------------
-        calc_hint = self._calculate(ans, standalone, context)
+        calc_hint, context = self._calculate(ans, standalone, context, indexes)
+        ans.retrieved = context
         feedback = ""
         for attempt in range(1, cfg.max_answer_attempts + 1):
             ans.answer_attempts = attempt
@@ -397,40 +399,125 @@ class AgenticRAG:
             "missing_query": str(data.get("missing_query", "") or ""),
         }
 
-    def _calculate(self, ans: Answer, question: str, passages: list[ScoredChunk]) -> str:
-        """Run the calculator tool for quantitative questions; returns a generator hint or ""."""
+    def _calculate(
+        self,
+        ans: Answer,
+        question: str,
+        passages: list[ScoredChunk],
+        indexes: list[DocumentIndex] | None = None,
+    ) -> tuple[str, list[ScoredChunk]]:
+        """Run the calculator tool for quantitative questions: (generator hint or "", passages).
+
+        Passages are returned because counting identifiers may add the chunks that hold
+        the rest of a sequence (NIST q10: MS-2.7-001..008 on p37, MS-2.7-009 on p38).
+        The result is *forced* into the answer (``_ensure_calc_in_answer``) only when the
+        question needs arithmetic by its wording and every operand was checked.
+        """
         self._calc = None
         if (
             not self.config.use_calculator
             or not passages
             or not calculator.is_quantitative(question)
         ):
-            return ""
-        msgs = [
-            {"role": "system", "content": calculator.CALC_SYSTEM},
-            {
-                "role": "user",
-                "content": calculator.CALC_USER.format(
-                    passages=P.format_passages(passages), question=question
+            return "", passages
+        forced = calculator.needs_arithmetic(question)
+
+        prefix = calculator.id_prefix(question, [p.chunk.text for p in passages])
+        if prefix:
+            passages = self._complete_id_sequence(ans, prefix, passages, indexes or [])
+            calc = calculator.count_ids(prefix, [p.chunk.text for p in passages])
+            if calc:
+                calc["forced"] = True
+                self._calc = calc
+                self._record(ans, "calculate", {"output": calc, "deterministic": True}, 0.0)
+                return calculator.hint(calc), passages
+
+        if not forced:
+            stated = calculator.stated_change(question, [p.chunk.text for p in passages])
+            if stated:  # BEA q13: the release says "increased $6.8 billion" — nothing to compute
+                self._record(ans, "calc_skipped", {"stated": stated}, 0.0)
+                return "", passages
+
+        texts = [p.chunk.text for p in passages]
+        feedback = ""
+        calc = None
+        for attempt in (1, 2):  # one retry, told why the first attempt was rejected or empty
+            msgs = [
+                {"role": "system", "content": calculator.CALC_SYSTEM},
+                {
+                    "role": "user",
+                    "content": calculator.CALC_USER.format(
+                        passages=P.format_passages(passages), question=question, feedback=feedback
+                    ),
+                },
+            ]
+            outcome = self._step(
+                ans,
+                "calculate",
+                lambda m=msgs: calculator.evaluate(
+                    self._json_call(m, calculator.CALC_SCHEMA, max_tokens=450), texts
                 ),
-            },
-        ]
-        result = self._step(
-            ans,
-            "calculate",
-            lambda: calculator.run(self._json_call(msgs, calculator.CALC_SCHEMA, max_tokens=350)),
-        )
-        self._calc = result
-        return calculator.hint(result) if result else ""
+                attempt=attempt,
+            )
+            if outcome is None and forced and attempt == 1:
+                # Kaggle trace (NIST q11, "how many months between ..."): the first call gave
+                # no calculation (needed=false or invalid JSON) and the generator then refused.
+                feedback = calculator.CALC_MISSING
+                continue
+            if not outcome or "rejected" not in outcome:
+                calc = outcome
+                break
+            feedback = calculator.CALC_FEEDBACK.format(
+                problems="\n".join(f"- {p}" for p in outcome["rejected"])
+            )
+        if not calc:
+            return "", passages
+        calc["forced"] = forced and calc.get("verified", False)
+        self._calc = calc
+        return calculator.hint(calc, forced=calc["forced"]), passages
+
+    def _complete_id_sequence(
+        self,
+        ans: Answer,
+        prefix: str,
+        passages: list[ScoredChunk],
+        indexes: list[DocumentIndex],
+    ) -> list[ScoredChunk]:
+        """Append the chunks that list further ``prefix-NNN`` IDs missing from the passages.
+
+        A list that spans a page break is split over several chunks and retrieval rarely
+        returns all of them, so a count over the passages alone comes out short.
+        """
+        have = {p.chunk.chunk_id for p in passages}
+        seen = set().union(*(calculator.ids_with_prefix(p.chunk.text, prefix) for p in passages))
+        extra: list[ScoredChunk] = []
+        for ix in indexes:
+            for chunk in ix.chunks:
+                new = calculator.ids_with_prefix(chunk.text, prefix) - seen
+                if chunk.chunk_id not in have and new and len(extra) < self.config.top_k:
+                    extra.append(ScoredChunk(chunk=chunk, score=0.0))
+                    seen |= new
+        if extra:
+            self._record(
+                ans, "complete_ids", {"prefix": prefix, "pages": [p.chunk.page for p in extra]}, 0.0
+            )
+        return passages + extra
 
     def _ensure_calc_in_answer(self, ans: Answer) -> None:
         """If the generator ignored the computed result, state it (with citations) explicitly.
 
         Observed on Colab: given "computed 0.59 - 0.5 = 0.09" the model still wrote its own
-        number.  The citations refer to the same passage list the calculator saw.
+        number.  The citations refer to the same passage list the calculator saw.  Only
+        forced results are appended: a hint for a lookup question (BEA q11 got an
+        unrequested difference appended) or an unchecked operand never overrides the answer.
         """
         calc = getattr(self, "_calc", None)
-        if not calc or ans.refused or calculator.result_in_answer(ans.answer, calc):
+        if (
+            not calc
+            or not calc.get("forced")
+            or ans.refused
+            or calculator.result_in_answer(ans.answer, calc)
+        ):
             return
         ans.answer = ans.answer.rstrip() + calculator.answer_suffix(calc)
         ans.citations = build_citations(ans.answer, ans.retrieved)
