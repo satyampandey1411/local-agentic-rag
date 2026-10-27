@@ -224,7 +224,11 @@ class AgenticRAG:
             if verdict is not None:
                 ans.grounded = bool(verdict["supported"])
                 ans.unsupported_claims = [c for c in verdict.get("unsupported_claims", []) if c][:5]
-        if not (ans.refused or ans.grounded is False) or cfg.max_retrieval_rounds < 2:
+        calc_failed = getattr(self, "_calc_failed", False)
+        if (
+            not (ans.refused or ans.grounded is False or calc_failed)
+            or cfg.max_retrieval_rounds < 2
+        ):
             return
 
         # 2. Escalate: broader search, filtered evidence, regenerate with feedback.
@@ -237,9 +241,10 @@ class AgenticRAG:
             ans.raw_response,
             ans.retrieved,
         )
-        self._record(
-            ans, "escalate", {"reason": "refused" if ans.refused else "unsupported claims"}, 0.0
-        )
+        reason = "refused" if ans.refused else "unsupported claims"
+        if not ans.refused and ans.grounded is not False:
+            reason = "no grounded calculation"
+        self._record(ans, "escalate", {"reason": reason}, 0.0)
         if cfg.use_planner and not planned:
             plan = self._step(ans, "plan", lambda: self._plan(standalone, title, history))
             if plan:
@@ -484,6 +489,7 @@ class AgenticRAG:
         question needs arithmetic by its wording and every operand was checked.
         """
         self._calc = None
+        self._calc_failed = False
         if (
             not self.config.use_calculator
             or not passages
@@ -509,8 +515,15 @@ class AgenticRAG:
                 return "", passages
 
         texts = [p.chunk.text for p in passages]
-        feedback = ""
+        cfg = self.config
+        dates = ""
+        if cfg.calc_date_candidates and calculator.asks_time_span(question):
+            dates = calculator.date_candidates([(p.chunk.page, p.chunk.text) for p in passages])
+            if dates:
+                self._record(ans, "date_candidates", {"dates": dates.count("\n- ")}, 0.0)
+        feedback = dates
         calc = None
+        rejected = False
         for attempt in (1, 2):  # one retry, told why the first attempt was rejected or empty
             msgs = [
                 {"role": "system", "content": calculator.CALC_SYSTEM},
@@ -525,22 +538,30 @@ class AgenticRAG:
                 ans,
                 "calculate",
                 lambda m=msgs: calculator.evaluate(
-                    self._json_call(m, calculator.CALC_SCHEMA, max_tokens=450), texts
+                    self._json_call(m, calculator.CALC_SCHEMA, max_tokens=450),
+                    texts,
+                    align=cfg.calc_cell_alignment,
+                    question=question if cfg.calc_measure_check else "",
                 ),
                 attempt=attempt,
             )
             if outcome is None and forced and attempt == 1:
                 # Kaggle trace (NIST q11, "how many months between ..."): the first call gave
                 # no calculation (needed=false or invalid JSON) and the generator then refused.
-                feedback = calculator.CALC_MISSING
+                feedback = dates + calculator.CALC_MISSING
                 continue
             if not outcome or "rejected" not in outcome:
                 calc = outcome
                 break
-            feedback = calculator.CALC_FEEDBACK.format(
+            rejected = True
+            feedback = dates + calculator.CALC_FEEDBACK.format(
                 problems="\n".join(f"- {p}" for p in outcome["rejected"])
             )
         if not calc:
+            # An arithmetic question whose operands were rejected has no usable evidence in
+            # these passages; with the measure check on, the adaptive agent then searches
+            # wider instead of trusting a verifier that accepts the wrong table's numbers.
+            self._calc_failed = cfg.calc_measure_check and forced and rejected
             return "", passages
         calc["forced"] = forced and calc.get("verified", False)
         self._calc = calc

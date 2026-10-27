@@ -22,6 +22,7 @@ from collections import defaultdict
 
 import numpy as np
 
+from local_agentic_rag.agent.calculator import question_measure, table_conflicts
 from local_agentic_rag.config import RAGConfig
 from local_agentic_rag.retrieval.embedder import Embedder
 from local_agentic_rag.retrieval.index import DocumentIndex
@@ -83,6 +84,27 @@ def section_refs(question: str) -> list[str]:
         if ref not in refs:
             refs.append(ref)
     return refs[:4]
+
+
+def measure_order(question: str, ranked: list[ScoredChunk]) -> list[ScoredChunk]:
+    """Stable reorder (``RAGConfig.measure_aware_retrieval``): table passages none of whose
+    numbers can be the measure the question asks for go after all others.
+
+    Kaggle traces (BEA release): "at what annual rate did ... grow" was answered from the
+    contributions table (percentage points) ranked just below the percent-change table; an
+    "annualized" question got year-over-year rows ahead of the sentence stating the rates; a
+    question "in billions of dollars" got percent-change rows ahead of the dollar-level row
+    in the reranked pool.  Questions without a clear measure are untouched.
+    """
+    if not any(question_measure(question).values()):
+        return ranked
+    fits = [
+        sc
+        for sc in ranked
+        if sc.chunk.kind != "table" or not table_conflicts(question, sc.chunk.text)
+    ]
+    keep = {id(sc) for sc in fits}
+    return fits + [sc for sc in ranked if id(sc) not in keep]
 
 
 class HybridRetriever:
@@ -191,6 +213,8 @@ class HybridRetriever:
             sc.rerank_score = float(s)
             sc.score = float(s)
         ranked = sorted(pool, key=lambda s: s.score, reverse=True)
+        if self.config.measure_aware_retrieval:
+            ranked = measure_order(queries[0], ranked)
         pinned = [sc for sc in ranked if sc.chunk.chunk_id in routed][: min(self.MAX_PINNED, top_k)]
         # Extra queries (decomposed sub-questions, rewrites) only ADD coverage: each one's
         # best passage gets a slot if it scores well, replacing the weakest *primary* hit

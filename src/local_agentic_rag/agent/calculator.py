@@ -322,6 +322,244 @@ def _check_in_passage(value: float, label: str, text: str) -> tuple[bool, str]:
     return True, problem or f"{_fmt(value)} is not in a table cell that matches its label"
 
 
+_NAME_WORD_RE = re.compile(r"[a-z0-9]+\+*")  # keeps "dragon+" apart from "dragon"
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in _NAME_WORD_RE.findall(text.lower()) if w not in _STOP]
+
+
+def _name_tokens(text: str) -> set[str]:
+    """Like ``_tokens`` (joined neighbours, initials) but with exact name words."""
+    words = _words(text)
+    out = set(words) | {a + b for a, b in zip(words, words[1:], strict=False)}
+    alpha = [w for w in words if w.isalpha()]
+    if len(alpha) >= 2:
+        out.add("".join(w[0] for w in alpha))
+    return out
+
+
+def _row_key(row_label: str, want: set[str]) -> tuple[int, int] | None:
+    """(matched words, unmatched words) of a row label against an operand label, or ``None``.
+
+    Exact words only: "gpt-4o" fits the label "gpt-4o | No Doc" as (2, 0); "gpt-4o-mini" as
+    (2, 1) — its word "mini" is not in the label.
+    """
+    words = set(_words(row_label))
+    if not words:
+        return None
+    matched = sum(w in want for w in words)
+    return matched, len(words) - matched
+
+
+def align_cell(value: float, label: str, text: str) -> tuple[float, str, str] | None:
+    """``(cell value, row, column)`` of the one table cell that ``label`` names, when ``value``
+    sits in a table cell of ``text`` but not in that one; otherwise ``None``.
+
+    Kaggle trace (arXiv q10): the label "gpt-4o | No Doc" was right, but the value 52.0 was
+    copied from the "gpt-4o-mini" row of the same grid.  The name check in ``ground`` accepts
+    it ("gpt-4o" is a prefix of "gpt-4o-mini"); this looks up the cell the label names
+    instead.  Deliberately conservative — no alignment when:
+
+    * the value also occurs in prose (a sentence carries its own context) or not in a cell;
+    * any cell of the passage holds several numbers (merged columns: positions are unsafe);
+    * no row is named in full by the label, the best such row or column is tied, or the
+      value sits on another row that the label also names in full (then it stays);
+    * the named cell does not hold exactly one number.
+    """
+    text = text.translate(_DEVANAGARI_DIGITS)
+    rows = _table_rows(text)
+    if not rows:
+        return None
+    table_lines = {line for line, _, _ in rows}
+    for line in text.splitlines():
+        if line not in table_lines and any(_same(x, value) for x in _numbers_in(line)):
+            return None
+    if any(len(_numbers_in(cell)) > 1 for _, _, cells in rows for _, cell in cells):
+        return None
+    hits = [
+        (r, header)
+        for r, (_, _, cells) in enumerate(rows)
+        for header, cell in cells
+        if any(_same(x, value) for x in _numbers_in(cell))
+    ]
+    if not hits:
+        return None
+    want = _name_tokens(label)
+    keys = [_row_key(row_label, want) for _, row_label, _ in rows]
+    # Candidate rows are named in full by the label (every word of the row label is in it).
+    full = [(k[0], r) for r, k in enumerate(keys) if k is not None and k[0] >= 1 and k[1] == 0]
+    if not full:
+        return None
+    most = max(m for m, _ in full)
+    best_rows = [r for m, r in full if m == most]
+    if len(best_rows) != 1:
+        return None
+    row = best_rows[0]
+    if any(r != row and r in {fr for _, fr in full} for r, _ in hits):
+        return None  # the value's own row is also named by the label: leave it
+    _, row_label, cells = rows[row]
+    row_words = set(_words(row_label))
+    residual = {t for t in _tokens(label) if not any(_match(t, w) for w in row_words)}
+    numeric = [(h, c) for h, c in cells if _numbers_in(c)]
+    scores = [(_overlap(residual, _tokens(h)), h, c) for h, c in numeric]
+    if not scores:
+        return None
+    top = max(s for s, _, _ in scores)
+    best_cols = [(h, c) for s, h, c in scores if s == top]
+    if top < 1 or len(best_cols) != 1:
+        return None
+    header, cell = best_cols[0]
+    if (row, header) in hits:
+        return None  # the value already sits in the cell its label names
+    found = _numbers_in(cell)
+    if len(found) != 1:
+        return None
+    signed = -found[0] if re.search(r"[-−–(]\s*\d", cell) else found[0]
+    return signed, row_label, header
+
+
+# --------------------------------------------------------------------------- measures
+#
+# Kaggle traces (BEA release): the operand's row and period were right but the *measure*
+# was not — a year-over-year change for an "annualized" rate (q10: 2.0/2.1 from Table 6
+# "Percent Change from Quarter One Year Ago" instead of -0.6/3.8), a percent change for a
+# question in billions of dollars (q09: 6.0/2.9 from Table 1).  Statistical releases state
+# the measure in the table title, a unit line or the column header; the question states it
+# in words.  Only clear contradictions count; anything unclassified passes.
+
+_Q_DOLLARS_RE = re.compile(
+    r"\b(in|of) (thousands|millions|billions|trillions) of dollars\b|\bin dollars\b"
+    r"|\blevel\b|\$\s?\d",
+    re.IGNORECASE,
+)
+_Q_RATE_RE = re.compile(
+    r"\b(growth rate|annual(ized)? rate|annualized|percent change|percentage change"
+    r"|at what (\w+ )?rate)\b",
+    re.IGNORECASE,
+)
+_Q_ANNUALIZED_RE = re.compile(r"\b(annuali[sz]ed|(at an? )?annual rates?)\b", re.IGNORECASE)
+_M_YOY_RE = re.compile(
+    r"\b(from (the same )?(quarter|month|period) (one )?a? ?year (ago|earlier)"
+    r"|year[- ]over[- ]year|from a year (ago|earlier)|from quarter one year ago)\b",
+    re.IGNORECASE,
+)
+_M_CONTRIB_RE = re.compile(r"\b(contributions? to|percentage points?)\b", re.IGNORECASE)
+_M_PERCENT_RE = re.compile(r"\b(percent change|percent|percentage change)\b", re.IGNORECASE)
+_M_DOLLARS_RE = re.compile(
+    r"\b(thousands|millions|billions|trillions) of (chained \(\d{4}\) )?dollars\b|\blevels?\b",
+    re.IGNORECASE,
+)
+
+
+_Q_CONTRIB_RE = re.compile(r"\bcontribut", re.IGNORECASE)
+_Q_NOMINAL_RE = re.compile(r"\b(current[- ]dollars?|nominal)\b", re.IGNORECASE)
+_M_REAL_RE = re.compile(r"\bchained\b", re.IGNORECASE)
+
+
+def question_measure(question: str) -> dict[str, bool]:
+    """What the question's operands must be: ``dollars`` (a level or change in dollars),
+    ``rate`` (a percent change) and/or ``annualized``.  A question that names two measures
+    — a dollar amount and a rate, or a contribution and anything else (BEA q11: "how many
+    percentage points did retail trade contribute ..., and at what annual rate ...") — is
+    left unclassified for both (only ``annualized`` can still be set)."""
+    dollars = bool(_Q_DOLLARS_RE.search(question))
+    rate = bool(_Q_RATE_RE.search(question))
+    if (dollars and rate) or _Q_CONTRIB_RE.search(question):
+        dollars = rate = False
+    return {
+        "dollars": dollars,
+        "rate": rate,
+        "annualized": bool(_Q_ANNUALIZED_RE.search(question)),
+        # "current-dollar GDP": not the chained (inflation-adjusted) dollar figures beside it
+        "nominal": bool(_Q_NOMINAL_RE.search(question)),
+    }
+
+
+def _measure_of(text: str) -> str:
+    """ "contribution" | "percent" | "dollars" | "" for a header, unit line or title."""
+    if _M_CONTRIB_RE.search(text):
+        return "contribution"
+    if _M_PERCENT_RE.search(text):
+        return "percent"
+    if _M_DOLLARS_RE.search(text):
+        return "dollars"
+    return ""
+
+
+def cell_measure(text: str, value: float | None = None) -> list[tuple[str, bool, bool, str]]:
+    """``(measure, year_over_year, chained, context)`` of every table cell of ``text`` holding ``value``
+    (every numeric cell when ``value`` is None).
+
+    The most specific statement wins: the column header, then the row's section labels
+    ("Percentage points at annual rates | Mining"), then the passage's non-table lines
+    (the table title, e.g. "Table 6. ... Percent Change from Quarter One Year Ago").
+    """
+    text = text.translate(_DEVANAGARI_DIGITS)
+    rows = _table_rows(text)
+    table_lines = {line for line, _, _ in rows}
+    title = " ".join(line for line in text.splitlines() if line not in table_lines)
+    out = []
+    for line, row_label, cells in rows:
+        sections = (
+            ""
+            if line.lstrip().startswith("|")  # Markdown grid: no section labels on the line
+            else " ".join(s for s in line.split(" | ")[:-1] if " = " not in s and s != row_label)
+        )
+        for header, cell in cells:
+            numbers = _numbers_in(cell)
+            if not numbers or (value is not None and not any(_same(x, value) for x in numbers)):
+                continue
+            levels = (header, sections, title)
+            measure = next((m for m in map(_measure_of, levels) if m), "")
+            yoy = any(_M_YOY_RE.search(t) for t in levels)
+            chained = bool(_M_REAL_RE.search(f"{header} {sections}"))
+            out.append((measure, yoy, chained, f"{title[:90]} | {header}".strip(" |")))
+    return out
+
+
+def _conflict(want: dict[str, bool], measure: str, yoy: bool, chained: bool, context: str) -> str:
+    if want["dollars"] and measure in ("percent", "contribution"):
+        return f'it is a {measure} figure ("{context}"), not an amount in dollars'
+    if want["rate"] and measure in ("contribution", "dollars"):
+        what = (
+            "a contribution in percentage points"
+            if measure == "contribution"
+            else "a dollar amount"
+        )
+        return f'it is {what} ("{context}"), not a rate of change'
+    if want["annualized"] and yoy:
+        return f'it is a change from a year earlier ("{context}"), not an annualized rate'
+    if want["nominal"] and chained:
+        return f'it is in chained (inflation-adjusted) dollars ("{context}"), not current dollars'
+    return ""
+
+
+def measure_conflict(question: str, value: float, text: str) -> str:
+    """Why ``value`` (a table cell of ``text``) cannot be the measure the question asks for,
+    or "" when one of its cells fits (or nothing is known)."""
+    want = question_measure(question)
+    if not any(want.values()):
+        return ""
+    rows = _table_rows(text.translate(_DEVANAGARI_DIGITS))
+    table_lines = {line for line, _, _ in rows}
+    for line in text.translate(_DEVANAGARI_DIGITS).splitlines():
+        if line not in table_lines and any(_same(x, value) for x in _numbers_in(line)):
+            return ""  # stated in a sentence: the sentence carries its own measure
+    reasons = [_conflict(want, *found) for found in cell_measure(text, value)]
+    return reasons[0] if reasons and all(reasons) else ""
+
+
+def table_conflicts(question: str, text: str) -> bool:
+    """Is ``text`` a table passage none of whose numbers can be the measure the question
+    asks for (every numeric cell conflicts, see ``measure_conflict``)?"""
+    want = question_measure(question)
+    if not any(want.values()):
+        return False
+    found = cell_measure(text)
+    return bool(found) and all(_conflict(want, *f) for f in found)
+
+
 def _label_names_value(value: float, label: str) -> bool:
     """Is ``value`` really part of a name in its own label ("gpt-4o" → 4, "Recall@10" → 10)?"""
     for m in _LABEL_NUM_RE.finditer(label):
@@ -338,7 +576,12 @@ def _readable(text: str) -> bool:
     return lang.script_of(text) in ("latin", "unknown")
 
 
-def ground(data: dict[str, Any], passages: list[str]) -> tuple[dict[str, Any], list[str], bool]:
+def ground(
+    data: dict[str, Any],
+    passages: list[str],
+    align: bool = False,
+    question: str = "",
+) -> tuple[dict[str, Any], list[str], bool]:
     """Check an extraction against the passages: ``(data, problems, verified)``.
 
     Every operand must appear in the passage it cites (sign, commas and % ignored) and,
@@ -347,6 +590,12 @@ def ground(data: dict[str, Any], passages: list[str]) -> tuple[dict[str, Any], l
     slips are common and harmless).  ``verified`` is False when a passage could not be
     checked (numbers written as words in a non-Latin script) — such results are hinted,
     never forced.  Free-form expressions may only use the listed operands.
+
+    ``align`` (``RAGConfig.calc_cell_alignment``): an operand copied from a table cell
+    other than the one its label names is replaced by that cell's value (``align_cell``);
+    the old value is kept as ``"aligned_from"``.  ``question`` (with
+    ``RAGConfig.calc_measure_check``): an operand from a table whose measure contradicts
+    the question's is rejected (``measure_conflict``).
     """
     data = dict(data)
     problems: list[str] = []
@@ -393,9 +642,21 @@ def ground(data: dict[str, Any], passages: list[str]) -> tuple[dict[str, Any], l
         cited = v.get("passage") if isinstance(v.get("passage"), int) else None
         cited = cited if cited is not None and 1 <= cited <= n else None
         candidates = ([cited] if cited else []) + [i for i in range(1, n + 1) if i != cited]
+        if align:
+            for i in candidates:
+                aligned = align_cell(x, label, passages[i - 1])
+                if aligned is not None:
+                    v["aligned_from"], v["value"], v["passage"] = x, aligned[0], i
+                    x, cited = aligned[0], i
+                    candidates = [i] + [j for j in candidates if j != i]
+                    break
+                if any(_same(y, x) for y in _numbers_in(passages[i - 1])):
+                    break  # only the first passage that holds the value is realigned
         first_problem, found = "", False
         for i in candidates:
             hit, problem = _check_in_passage(x, label, passages[i - 1])
+            if hit and not problem and question:
+                problem = measure_conflict(question, x, passages[i - 1])
             if hit and not problem:
                 v["passage"] = i
                 break
@@ -420,20 +681,31 @@ def ground(data: dict[str, Any], passages: list[str]) -> tuple[dict[str, Any], l
     return data, problems, verified
 
 
-def evaluate(data: dict[str, Any] | None, passages: list[str]) -> dict[str, Any] | None:
-    """``run`` on grounded operands only.
+def evaluate(
+    data: dict[str, Any] | None,
+    passages: list[str],
+    align: bool = False,
+    question: str = "",
+) -> dict[str, Any] | None:
+    """``run`` on grounded operands only (``align``/``question``: see ``ground``).
 
     Returns the calculation (with ``"verified"``), ``{"rejected": [reasons], ...}`` when an
     operand is not grounded, or ``None`` when no calculation is needed or possible.
     """
     if not data or not data.get("needed"):
         return None
-    data, problems, verified = ground(data, passages)
+    data, problems, verified = ground(data, passages, align=align, question=question)
     if problems:
         return {"rejected": problems[:6], "values": data.get("values", [])}
     calc = run(data)
     if calc is not None:
         calc["verified"] = verified
+        aligned = [v for v in calc.get("values", []) if "aligned_from" in v]
+        if aligned:
+            calc["aligned"] = [
+                f'{_fmt(float(v["aligned_from"]))} -> {_fmt(float(v["value"]))} ("{v.get("label", "")}")'
+                for v in aligned
+            ]
     return calc
 
 
@@ -480,6 +752,72 @@ def stated_change(question: str, passages: list[str]) -> str:
             if stated and _overlap(subject, set(_WORD_RE.findall(sentence.lower()))) >= 2:
                 return sentence.strip()[:200]
     return ""
+
+
+# --------------------------------------------------------------------------- dates
+
+_SPAN_Q_RE = re.compile(
+    r"\bhow (many|much) (months|years|weeks|days|time)\b|\bhow long\b", re.IGNORECASE
+)
+_MONTHS = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+]
+_DATE_RE = re.compile(
+    r"\b(" + "|".join(m.capitalize() for m in _MONTHS) + r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?"
+    r"|Oct|Nov|Dec)\.?\s+(?:\d{1,2},?\s+)?((?:19|20)\d\d)\b"
+)
+DATES_NOTE = """
+Dates found in the passages (month year, passage, where):
+{dates}
+A date on the title page (page 1-2) of a document is normally its publication date.
+"""
+
+
+def asks_time_span(question: str) -> bool:
+    return bool(_SPAN_Q_RE.search(question))
+
+
+def date_candidates(passages: list[tuple[int, str]], limit: int = 8) -> str:
+    """Prompt note listing the month-year dates in the passages (``(page, text)`` pairs).
+
+    Kaggle trace (NIST q11, "how many months passed between the release of the AI RMF 1.0
+    and the publication of this profile?"): both dates were retrieved — "released in
+    January 2023" on p5 and "July 2024" alone on the title page — but the calculator call
+    twice returned no calculation and the generator refused ("the passages do not provide
+    specific dates").  Listing the dates, with the title-page one named as the publication
+    date, gives the extraction step the operands it missed.  "" when there are none.
+    """
+    seen: set[tuple[int, int]] = set()
+    lines = []
+    for number, (page, text) in enumerate(passages, start=1):
+        for m in _DATE_RE.finditer(text):
+            name = m.group(1).lower()
+            month = next(i for i, full in enumerate(_MONTHS, start=1) if full.startswith(name[:3]))
+            year = int(m.group(2))
+            if (year, month) in seen:
+                continue
+            seen.add((year, month))
+            start = max(0, m.start() - 60)
+            context = " ".join(text[start : m.end() + 20].split())
+            where = "title page" if page <= 2 else f"page {page}"
+            lines.append(
+                f"- {_MONTHS[month - 1].capitalize()} {year} (month {month}): passage "
+                f'{number}, {where}: "...{context}..."'
+            )
+            if len(lines) >= limit:
+                return DATES_NOTE.format(dates="\n".join(lines))
+    return DATES_NOTE.format(dates="\n".join(lines)) if lines else ""
 
 
 # --------------------------------------------------------------------------- identifier counts

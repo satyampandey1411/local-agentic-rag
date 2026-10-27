@@ -80,6 +80,22 @@ class RAGConfig:
     # question names a year / proper-noun phrase / code found in none of the retrieved
     # passages, replace the answer with the standard refusal (agent/presupposition.py).
     presupposition_check: bool = False
+    # Numerical questions (experimental, off until measured; agent/calculator.py):
+    # - calc_cell_alignment: an operand copied from a table cell other than the one its label
+    #   names ("gpt-4o | No Doc" = 52.0, which is gpt-4o-mini's cell) is replaced by the
+    #   named cell's value, when that cell is unambiguous.
+    # - calc_measure_check: an operand from a table whose measure contradicts the question
+    #   (year-over-year vs annualized, percent vs dollars, contribution vs rate) is rejected;
+    #   a question that needs arithmetic and ends with no grounded calculation then escalates
+    #   (wider search) even if the verifier accepted the first answer.
+    # - calc_date_candidates: for time-span questions the calculator is shown the month-year
+    #   dates found in the passages, the title-page date marked as the publication date.
+    # - measure_aware_retrieval: after reranking, table passages none of whose numbers can be
+    #   the measure the question asks for are moved behind the others (stable order).
+    measure_aware_retrieval: bool = False
+    calc_cell_alignment: bool = False
+    calc_measure_check: bool = False
+    calc_date_candidates: bool = False
 
     # --- Generation ------------------------------------------------------
     temperature: float = 0.0
@@ -149,6 +165,18 @@ PRESETS: dict[str, dict[str, Any]] = {
     "agentic_full": {"agent_mode": "full"},
     # Adaptive agent + the F11 presupposition gate (flag off in every other preset).
     "agentic_presup": {"presupposition_check": True},
+    # Adaptive agent + the numerical-question fixes, separately and together (flags are off
+    # in every other preset).
+    "agentic_align": {"calc_cell_alignment": True},
+    "agentic_measure": {"calc_measure_check": True},
+    "agentic_dates": {"calc_date_candidates": True},
+    "agentic_measure_retrieval": {"measure_aware_retrieval": True},
+    "agentic_numeric": {
+        "calc_cell_alignment": True,
+        "calc_measure_check": True,
+        "calc_date_candidates": True,
+        "measure_aware_retrieval": True,
+    },
 }
 
 
