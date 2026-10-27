@@ -3,6 +3,37 @@
 All numbers come from code in this repository and can be reproduced. Section 4
 lists the exact commands.
 
+## 00000. Numerical-question fixes (2026-10-27, Kaggle T4 x2, runs 5 and 6)
+
+The six numerical questions of the English set failed mostly on the wrong *measure* (a
+year-over-year change for an annualized rate, a percent change for a dollar amount, a contribution
+for a growth rate) or the wrong cell of the right table; the arithmetic itself was never wrong.
+Four fixes were added behind flags (`config.py`) and measured on the dev sets only (English 61 q,
+multilingual 20 q); the held-out sets were not used.
+
+| English set | Default before | Three fixes (now the default) | All four fixes |
+|---|---|---|---|
+| Answer accuracy (52 answerable) | 76.9% (40/52) | **84.6%** (44/52) | 84.6% (44/52) |
+| Numerical questions | 2/6 | 5/6 | 5/6 |
+| Table questions | 10/12 | 11/12 | 11/12 |
+| False refusals | 1.9% | 0% | 0% |
+| Unanswerable refused | 9/9 | 9/9 | 9/9 |
+| Answer latency p50 / p95 | 6.7 / 22.1 s | 6.5 / 21.8 s | 6.8 / 29.1 s |
+
+* **The same four questions were fixed in both runs** (arXiv q10, BEA q08, BEA q10, NIST q11) and
+  no question that the old default answers was lost in any configuration.
+* **Which fix does what** (run 5, one flag at a time): cell alignment fixes arXiv q10 (the value had
+  been copied from the `gpt-4o-mini` row for `gpt-4o`: 21.2 → 34); measure-aware retrieval fixes
+  BEA q08 and q10; date candidates fix NIST q11 (a false refusal). The measure check also fixes
+  BEA q10 but raised p95 latency by 6.7 s, so it stays off.
+* **Multilingual unchanged**: run 5 94.4% with and without the fixes; run 6 88.9% for both the old
+  default and the new one (the extra miss, the scanned Hindi question, failed in both, as it has
+  in earlier runs).
+* Rows: run 6 (`notebook4ee260bf2d`: new default on GPU 0, old default on GPU 1, same session);
+  "All four fixes" from run 5 (`notebook64384bdfea`). Numbers were read from the run logs.
+* **Not re-measured with the fixes:** the real-document questions, held-out set 2 and the six scale
+  tiers below were single-use or long runs made with the previous default.
+
 ## 0000. Final run (2026-10-27, Kaggle T4 x2)
 
 Full tables and method: [SCALE.md](SCALE.md#final-run-kaggle-t4-27-oct). Code snapshot `run3` (table detection

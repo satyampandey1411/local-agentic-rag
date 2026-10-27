@@ -33,6 +33,7 @@ Nothing in this table is a benchmark result unless a run is named.
 | Unit suite | ✅ | 845 passed, ruff clean (27 Oct); 829 at the final-run snapshot |
 | F6 "which table" answers | ✅ measured (final run) | merged 26 Oct: deterministic, no prompt change; appends the first cited table's caption when the answer omits the number; 40 tests. Final run (27 Oct, T4): "which table" questions on the Statistical Abstract 5/6 correct (wrong: statab-q10); English table questions unchanged 10/12 in runs 1–2 |
 | F12 source viewer polish | ✅ code | merged 26 Oct: citation scrolls the source pane to the highlight (seen in Chrome), focus styles, live region announces only the final answer, phone close button; 390 px layout checked in an emulated phone browser on 27 Oct (row above) |
+| Numerical-question fixes (root-cause analysis of the 6 numerical failures; 4 flags) | ✅ measured, 3 adopted | 27 Oct, dev sets only. Causes: wrong measure (year-over-year vs annualized, percent vs dollars, contribution vs rate) or wrong cell; arithmetic never wrong. Run 5 (`notebook64384bdfea`, T4 ×2): old default 76.9% → all four fixes 84.6% (numerical 2/6 → 5/6, false refusals 1.9% → 0%), multilingual 94.4% both; one flag at a time: alignment fixes arXiv q10, measure-aware retrieval BEA q08/q10, date candidates NIST q11, the measure check BEA q10 at +6.7 s p95. Run 6 (`notebook4ee260bf2d`): alignment + dates + measure-aware retrieval 84.6% (same 8 failures), p95 21.8 s vs 22.1 s for the old default in the same session, multilingual 88.9% for both. Those three are now the default; the measure check stays off. Real-document, held-out and scale results were measured before this change and not re-run (RESULTS §00000) |
 | F11 presupposition refusals (flag, off by default) | ✅ measured, not adopted | run 2 (T4): English 76.9% with the same failures but false refusals 1.9% → 3.8%; multilingual unchanged. No benefit, stays off |
 | F8 report and docs | 🔧 | report draft rebuilt (5 pages): final framing, users, long-document architecture, 26 Oct scale and real-document tables, limitations; GPU-pending items marked `\pending{}`. `docs/DEMO.md` written. Final-run numbers filled in 27 Oct; six-tier numbers from run 4 filled in 27 Oct |
 
@@ -74,7 +75,7 @@ Test suite: **571 passed at that time** (historical; the current count is 845, s
 | Gradio chat UI | ✅ | launched inline in Colab on the T4 (gradio 6.30); a live chat turn returned a verified, cited answer (screenshot: docs/img/chat_ui_colab_t4.png) |
 | HTML answer card + follow-up questions | ✅ | rendered in the Colab kernel; follow-up rewritten from chat history; the verifier flagged a contradictory claim with an amber badge |
 
-| Calculator tool for quantitative questions (operand extraction → grounding check → AST-safe evaluation) | ✅ / ⚠️ | unit tests incl. 30 grounding tests; operands must sit on the cited row and column, ungrounded extractions are retried once then dropped; numerical questions are still 2/6 because the 7B model often picks a grounded but wrong cell (RESULTS §0) |
+| Calculator tool for quantitative questions (operand extraction → grounding check → AST-safe evaluation) | ✅ / ⚠️ | unit tests incl. 30 grounding tests; operands must sit on the cited row and column, ungrounded extractions are retried once then dropped; numerical questions were 2/6 because the 7B model often picked a grounded but wrong cell; 5/6 since the 27 Oct fixes (cell alignment, measure-aware retrieval, date candidates; RESULTS §00000) |
 | Independent code review | ✅ | 7 confirmed edge-case bugs (empty pools, sub-query slot eviction, stale verdict/hint, non-finite calculator results, cache key, ablation config) fixed with regression tests |
 
 Test suite: **472 passed at that time** (historical; current count 845), offline, ~15 s (`pytest -q`). `ruff check .` clean.
@@ -167,12 +168,13 @@ not distinguished by script detection. The multilingual set is 20 questions, sin
 3. **Ingestion speed on Colab's 2 vCPUs:** table-heavy PDFs take ~1.3 s/page
    (BEA: 37 s for 28 pages). The result is cached, but very large reports
    (300+ pages) would take minutes.
-4. **Numerical and multi-hop questions remain the weakest categories.** Retrieval
-   finds the evidence. The 7B model then picks numbers from the wrong row or column of a
-   dense table, or does arithmetic wrong. The calculator removes the arithmetic error,
-   but operand extraction is still model-limited. Next: cell-level table retrieval,
-   and a larger model (Qwen2.5-14B Q4 fits in the measured VRAM headroom) for the
-   extraction step only.
+4. **Multi-hop questions remain the weakest category (5/9); numerical improved to 5/6.**
+   The 27 Oct fixes correct a value copied from the wrong cell, push tables of the wrong
+   measure down the ranking and list the dates for time-span questions (RESULTS §00000).
+   Still failing: BEA q09 (the dollar-level row ranks too low), and among other categories
+   BEA q06/q11/q13/q15 (a renamed row, gross output vs value added, a table whose caption
+   sits in a separate chunk). The fixes were tuned on the English dev set; their effect on
+   unseen documents is not measured.
 4b. **Agent loop vs single pass:** accuracy gains are within the 95% interval on this
    benchmark; see RESULTS. The default (adaptive) mode buys fewer false refusals and better
    citations for ~2.5× latency. `preset("hybrid_rerank")` is the fast option.

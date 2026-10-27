@@ -106,9 +106,9 @@ using open-weight models on a free Google Colab T4 GPU}\par
 \end{tabularx}
 
 \vspace{6pt}
-\kicker{Results at a glance (project notebook run top to bottom, Kaggle T4, 26 Oct)}\par\vspace{3pt}
+\kicker{Results at a glance (Kaggle T4, 26--27 Oct)}\par\vspace{3pt}
 \begin{tcbraster}[raster columns=4,raster equal height,raster column skip=6pt,raster before skip=0pt,raster after skip=0pt]
-  \metric{76.9\%}{answer accuracy}{61 English questions on 3 PDFs, up from 50.0\% at baseline}
+  \metric{84.6\%}{answer accuracy}{61 English questions; 76.9\% before the 27 Oct number fixes, 50.0\% at baseline}
   \metric{94.2\%}{page recall@5}{evidence page in the top 5, up from 73.1\% for the starting code}
   \metric{88.9\%}{multilingual accuracy}{20 questions: Hindi, Hinglish, Marathi, English, scanned pages}
   \metric{8.9 GB}{GPU memory in use}{of 15 GB on the T4, with the LLM, embedder and reranker loaded}
@@ -300,7 +300,7 @@ Latency, median      & 2.7 s  & 3.2 s  & 6.6 s \\
 \end{tabularx}}
 \note{Same 61 questions and LLM in every column. ``Baseline'' is the starting design (MiniLM search, single pass), measured in an earlier T4 run. ``Single pass'' and ``Agent'' use the multilingual retriever.
 ``Agent'' is the default (adaptive loop + calculator). 95\% intervals are about $\pm$12 points, so small
-differences between the last two columns are within noise.}
+differences between the last two columns are within noise. 27 Oct numerical fixes: 84.6\%.}
 
 \vspace{6pt}
 \subsection{Agent accuracy by question type}

@@ -115,7 +115,7 @@ follow = pipe.ask("And in 2023?", history=[("What was revenue growth in 2024?", 
 | | English set (61 q) | Multilingual set (20 q) |
 |---|---|---|
 | Page recall@5, original baseline → default retriever | 73.1% → 94.2% (recall@1 43% → 68%; English-only reranker 96.2%) | English-only → multilingual models: 0.944 → 1.000 |
-| Answer accuracy, default adaptive agent | 76.9% [63.5–88.5]; single pass 71.2%; original baseline design 50.0% | 88.9% (16/18) in the final run, 94.4% in the previous run of the same code: Hindi 7–8/8 (incl. scanned/OCR), Hinglish 3/3, Marathi 3/3, English→Indic 3/4 |
+| Answer accuracy, default adaptive agent | **84.6%** (44/52) with the numerical fixes (27 Oct, runs 5–6; numerical 2/6 → 5/6); 76.9% [63.5–88.5] before them; single pass 71.2%; original baseline design 50.0% | 88.9% (16/18) in the final run, 94.4% in the previous run of the same code: Hindi 7–8/8 (incl. scanned/OCR), Hinglish 3/3, Marathi 3/3, English→Indic 3/4 |
 | Unanswerable questions refused | 9 / 9 | 2 / 2 |
 | GPU memory in use (all models loaded) | 8.9 of 15 GB | |
 
