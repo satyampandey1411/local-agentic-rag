@@ -80,7 +80,11 @@ class RAGConfig:
     # question names a year / proper-noun phrase / code found in none of the retrieved
     # passages, replace the answer with the standard refusal (agent/presupposition.py).
     presupposition_check: bool = False
-    # Numerical questions (experimental, off until measured; agent/calculator.py):
+    # Numerical questions (agent/calculator.py). Measured on the English dev set (Kaggle runs
+    # 5-6, 27 Oct): alignment + date candidates + measure-aware retrieval took accuracy from
+    # 0.769 to 0.846 (numerical 2/6 -> 5/6) with no p95 latency cost and multilingual
+    # unchanged, so those three are on by default. The measure check is off: on its own it
+    # added +6.7 s p95 and its one gain also came from measure-aware retrieval.
     # - calc_cell_alignment: an operand copied from a table cell other than the one its label
     #   names ("gpt-4o | No Doc" = 52.0, which is gpt-4o-mini's cell) is replaced by the
     #   named cell's value, when that cell is unambiguous.
@@ -92,10 +96,10 @@ class RAGConfig:
     #   dates found in the passages, the title-page date marked as the publication date.
     # - measure_aware_retrieval: after reranking, table passages none of whose numbers can be
     #   the measure the question asks for are moved behind the others (stable order).
-    measure_aware_retrieval: bool = False
-    calc_cell_alignment: bool = False
+    measure_aware_retrieval: bool = True
+    calc_cell_alignment: bool = True
     calc_measure_check: bool = False
-    calc_date_candidates: bool = False
+    calc_date_candidates: bool = True
 
     # --- Generation ------------------------------------------------------
     temperature: float = 0.0
@@ -151,6 +155,9 @@ PRESETS: dict[str, dict[str, Any]] = {
         "retrieval_mode": "dense",
         "agentic": False,
         "top_k": 5,
+        "measure_aware_retrieval": False,
+        "calc_cell_alignment": False,
+        "calc_date_candidates": False,
     },
     # Better retrieval (hybrid BGE + BM25 + cross-encoder), still single pass.
     "hybrid_rerank": {"agentic": False},
@@ -165,15 +172,43 @@ PRESETS: dict[str, dict[str, Any]] = {
     "agentic_full": {"agent_mode": "full"},
     # Adaptive agent + the F11 presupposition gate (flag off in every other preset).
     "agentic_presup": {"presupposition_check": True},
-    # Adaptive agent + the numerical-question fixes, separately and together (flags are off
-    # in every other preset).
-    "agentic_align": {"calc_cell_alignment": True},
-    "agentic_measure": {"calc_measure_check": True},
-    "agentic_dates": {"calc_date_candidates": True},
-    "agentic_measure_retrieval": {"measure_aware_retrieval": True},
+    # The default agent before the numerical fixes (results up to 27 Oct were measured with
+    # this), and each fix added to it on its own (the run 5 ablation).
+    "agentic_pre_numeric": {
+        "measure_aware_retrieval": False,
+        "calc_cell_alignment": False,
+        "calc_date_candidates": False,
+    },
+    "agentic_align": {
+        "calc_cell_alignment": True,
+        "measure_aware_retrieval": False,
+        "calc_date_candidates": False,
+    },
+    "agentic_measure": {
+        "calc_measure_check": True,
+        "measure_aware_retrieval": False,
+        "calc_cell_alignment": False,
+        "calc_date_candidates": False,
+    },
+    "agentic_dates": {
+        "calc_date_candidates": True,
+        "measure_aware_retrieval": False,
+        "calc_cell_alignment": False,
+    },
+    "agentic_measure_retrieval": {
+        "measure_aware_retrieval": True,
+        "calc_cell_alignment": False,
+        "calc_date_candidates": False,
+    },
     "agentic_numeric": {
         "calc_cell_alignment": True,
         "calc_measure_check": True,
+        "calc_date_candidates": True,
+        "measure_aware_retrieval": True,
+    },
+    # The current default, named for the run 6 comparison.
+    "agentic_numeric_lite": {
+        "calc_cell_alignment": True,
         "calc_date_candidates": True,
         "measure_aware_retrieval": True,
     },

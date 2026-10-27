@@ -81,21 +81,33 @@ FLAGS = (
 )
 
 
-def test_flags_are_off_by_default_and_only_in_their_presets():
+def test_default_turns_on_the_measured_fixes_only():
+    # Kaggle runs 5-6: alignment + dates + measure-aware retrieval are the default; the
+    # measure check (latency cost, no extra gain) stays opt-in.
     cfg = RAGConfig()
-    assert not any(getattr(cfg, f) for f in FLAGS)
-    on = {name for name, p in PRESETS.items() if any(p.get(f) for f in FLAGS)}
-    assert on == {
-        "agentic_align",
-        "agentic_measure",
-        "agentic_dates",
-        "agentic_measure_retrieval",
-        "agentic_numeric",
+    assert cfg.calc_cell_alignment and cfg.calc_date_candidates and cfg.measure_aware_retrieval
+    assert not cfg.calc_measure_check
+    assert RAGConfig().with_overrides(**PRESETS["agentic_numeric_lite"]) == cfg
+    # the old default and the starting design reproduce earlier results: no fix on
+    for name in ("agentic_pre_numeric", "baseline"):
+        old = RAGConfig().with_overrides(**PRESETS[name])
+        assert not any(getattr(old, f) for f in FLAGS), name
+    # each single-flag ablation preset turns on exactly its own flag
+    single = {
+        "agentic_align": "calc_cell_alignment",
+        "agentic_measure": "calc_measure_check",
+        "agentic_dates": "calc_date_candidates",
+        "agentic_measure_retrieval": "measure_aware_retrieval",
     }
+    for name, flag in single.items():
+        c = RAGConfig().with_overrides(**PRESETS[name])
+        assert [f for f in FLAGS if getattr(c, f)] == [flag], name
     assert all(PRESETS["agentic_numeric"][f] for f in FLAGS)
     # agent-only flags: the ingestion fingerprint (chunk text, embeddings) is unchanged
     numeric = RAGConfig().with_overrides(**PRESETS["agentic_numeric"])
     assert numeric.ingestion_fingerprint() == RAGConfig().ingestion_fingerprint()
+    old = RAGConfig().with_overrides(**PRESETS["agentic_pre_numeric"])
+    assert old.ingestion_fingerprint() == RAGConfig().ingestion_fingerprint()
 
 
 # --------------------------------------------------------------------------- cell alignment
@@ -356,7 +368,10 @@ def _retriever(**cfg):
 
 def test_contribution_table_is_moved_behind_the_rate_table_only_with_the_flag():
     index = _table_index()
-    off = [sc.chunk.page for sc in _retriever().retrieve([Q_MINING], [index], top_k=3)]
+    off = [
+        sc.chunk.page
+        for sc in _retriever(measure_aware_retrieval=False).retrieve([Q_MINING], [index], top_k=3)
+    ]
     assert off == [21, 20, 2]  # BEA q08: the contributions table outranked Table 12
     on = _retriever(measure_aware_retrieval=True).retrieve([Q_MINING], [index], top_k=3)
     assert [sc.chunk.page for sc in on] == [20, 2, 21]
@@ -366,6 +381,8 @@ def test_contribution_table_is_moved_behind_the_rate_table_only_with_the_flag():
 
 
 def test_measure_order_leaves_unclassified_questions_alone():
-    ranked = _retriever().retrieve([Q_MINING], [_table_index()], top_k=3)
+    ranked = _retriever(measure_aware_retrieval=False).retrieve(
+        [Q_MINING], [_table_index()], top_k=3
+    )
     assert measure_order("What did mining contribute in Q2 2025?", ranked) == ranked
     assert [sc.chunk.page for sc in measure_order(Q_MINING, ranked)] == [20, 2, 21]
