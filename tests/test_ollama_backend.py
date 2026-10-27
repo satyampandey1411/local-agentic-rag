@@ -201,3 +201,49 @@ def test_stream_read_timeout_raises_llm_timeout_error(monkeypatch):
     with pytest.raises(LLMTimeoutError, match="timed out after"):
         list(llm.chat_stream([{"role": "user", "content": "q"}]))
     assert len(sent) == 1
+
+
+def test_ensure_ready_accepts_model_completed_by_a_concurrent_pull(monkeypatch):
+    """Two servers sharing one model directory: our pull fails, the other one finished it."""
+    from local_agentic_rag.llm import ollama as ollama_mod
+    from local_agentic_rag.llm.base import LLMError
+    from local_agentic_rag.llm.ollama import OllamaLLM
+
+    llm = OllamaLLM("qwen2.5:7b-instruct")
+    present = iter([False, True])
+    pulls = []
+
+    def failing_pull(progress=True):
+        pulls.append(1)
+        raise LLMError("ollama pull qwen2.5:7b-instruct failed: remove /root/.ollama/models/x")
+
+    monkeypatch.setattr(llm, "is_server_up", lambda: True)
+    monkeypatch.setattr(llm, "has_model", lambda: next(present))
+    monkeypatch.setattr(llm, "pull", failing_pull)
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: "OK")
+    monkeypatch.setattr(ollama_mod.time, "sleep", lambda s: None)
+    llm.ensure_ready()
+    assert pulls == [1]  # not pulled again: the model is there now
+
+
+def test_ensure_ready_retries_pull_once_then_raises(monkeypatch):
+    import pytest
+
+    from local_agentic_rag.llm import ollama as ollama_mod
+    from local_agentic_rag.llm.base import LLMError
+    from local_agentic_rag.llm.ollama import OllamaLLM
+
+    llm = OllamaLLM("qwen2.5:7b-instruct")
+    pulls = []
+
+    def failing_pull(progress=True):
+        pulls.append(1)
+        raise LLMError("ollama pull failed: network")
+
+    monkeypatch.setattr(llm, "is_server_up", lambda: True)
+    monkeypatch.setattr(llm, "has_model", lambda: False)
+    monkeypatch.setattr(llm, "pull", failing_pull)
+    monkeypatch.setattr(ollama_mod.time, "sleep", lambda s: None)
+    with pytest.raises(LLMError):
+        llm.ensure_ready()
+    assert pulls == [1, 1]

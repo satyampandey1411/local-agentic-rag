@@ -123,7 +123,15 @@ class OllamaLLM(LLM):
         if not self.has_model():
             if not pull:
                 raise LLMError(f"Model {self.model!r} not present; run `ollama pull {self.model}`.")
-            self.pull()
+            try:
+                self.pull()
+            except LLMError:
+                # Two servers sharing one model directory can pull at the same time (measured
+                # on Kaggle: "remove /root/.ollama/models/...: no such file"). The other pull
+                # usually completes the model, so wait briefly and try once more.
+                time.sleep(15)
+                if not self.has_model():
+                    self.pull()
         # Warm-up loads the weights into VRAM so the first question is not penalised.
         self.chat([{"role": "user", "content": "Reply with OK."}], max_tokens=4)
 
