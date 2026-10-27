@@ -26,8 +26,15 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
+# Dependencies first, against an empty placeholder package, so that a code change rebuilds only
+# the small layer below instead of downloading torch and its CUDA libraries again (~6 GB).
+RUN mkdir -p src/local_agentic_rag \
+    && touch src/local_agentic_rag/__init__.py \
+    && pip install ".[web]" \
+    && pip uninstall -y local-agentic-rag \
+    && rm -rf src build
 COPY src ./src
-RUN pip install ".[web]"
+RUN pip install --no-deps .
 
 # Non-root user. /data is created and owned before the VOLUME line so that a fresh named
 # volume inherits the right owner.

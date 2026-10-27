@@ -1,0 +1,9 @@
+# For machines without an NVIDIA GPU (or without the NVIDIA Container Toolkit): removes the GPU
+# reservations so the same stack runs on the CPU. Answers are much slower than on a GPU.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
+services:
+  ollama:
+    deploy: !reset {}
+  app:
+    deploy: !reset {}
