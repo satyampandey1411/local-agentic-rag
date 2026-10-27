@@ -1,4 +1,4 @@
-# Project status — 2026-10-26 (after the scale round)
+# Project status — 2026-10-27 (final sprint)
 
 Honest snapshot of what is implemented, what is verified and how, and what is
 still outstanding.
@@ -10,25 +10,29 @@ Nothing in this table is a benchmark result unless a run is named.
 
 | Item | State | Evidence / next action |
 |---|---|---|
-| F1 token streaming (backend + web UI) | ✅ code / ⏳ GPU | merged 26 Oct: Ollama NDJSON streaming, agent `on_token`, SSE `token` events batched every 50 ms, UI renders text then the verified answer; a broken stream falls back to the plain call. Tests pass; demo server sends queued → started → step → token ×18 → answer. Run 1 (T4): first words after 0.47 s median with one user, 0.70 s with two |
+| F1 token streaming (backend + web UI) | ✅ measured (run 1) | merged 26 Oct: Ollama NDJSON streaming, agent `on_token`, SSE `token` events batched every 50 ms, UI renders text then the verified answer; a broken stream falls back to the plain call. Tests pass; demo server sends queued → started → step → token ×18 → answer. Run 1 (T4): first words after 0.47 s median with one user, 0.70 s with two |
 | F2 faster table-heavy ingestion | ✅ measured | prose-page triage could not help (0 of 1,000 pages have lines without a table). Layout model on the GPU (opt-in `LOCAL_RAG_ONNX_GPU=1` + `onnxruntime-gpu[cuda,cudnn]`): run 2 (T4) parse of 1,000 table-heavy pages 224.7 s → 119.0 s (1.89×), byte-identical pages, ~0.7 GB GPU per worker. Notebook gets an opt-in install cell |
 | F5 Docker / one-command install, DEPLOY.md | ✅ files / ⛔ untested build | Dockerfile, compose, smoke script; smoke script passes against the demo server; `docker compose config` valid; images not built (no downloads) |
 | Grader: number words ("Seventeen" = 17) | ✅ | 93 unit tests incl. negatives; old grading tests unchanged |
-| F9 CI workflow | ✅ written / ⏳ | `.github/workflows/ci.yml`; runs only after a push |
-| heldout2 evaluation set | ✅ ready / ⏳ final run | 70 questions written independently of the system (authors read only the official sources): US Code Title 21 (30, from the HTML edition), GAO Cost Guide (22), CAG Hindi GST audit report (18, written in Hindi/Hinglish/English from the English edition; scored on answers only; its 4 unanswerable questions were checked against the executive summary only). PDFs are downloaded only on Kaggle (approved 26 Oct); the PDF copies the web reader cached on the laptop were deleted. Used once, in the final run |
-| F3 ask while ingesting | ✅ code / ⏳ GPU | merged 26 Oct: a processing document is askable after its first indexed batch; answers say "first n of N pages"; final index byte-identical with or without partial queries (test). Run 1 (T4): askable 206 s after upload of a 1,000-page PDF (96 pages indexed); answer correct and cited |
+| F9 CI workflow | ✅ | first run on GitHub after the 27 Oct push (commit e7abee2): lint and offline tests passed on Python 3.10 and 3.12 |
+| heldout2 evaluation set | ✅ used once (Title 21, CAG); GAO not run | 70 questions written independently of the system (authors read only the official sources): US Code Title 21 (30, from the HTML edition), GAO Cost Guide (22), CAG Hindi GST audit report (18, written in Hindi/Hinglish/English from the English edition; scored on answers only; its 4 unanswerable questions were checked against the executive summary only). PDFs are downloaded only on Kaggle (approved 26 Oct); the PDF copies the web reader cached on the laptop were deleted. Used once, in the final run (27 Oct): Title 21 19/25 answerable, 4/5 refused, recall@5 0.917; CAG 9/14 answerable, 2/4 unanswerable refused. GAO Cost Guide: **not run**, gao.gov answered HTTP 403 to the download from Kaggle, so its 22 questions remain unused |
+| F3 ask while ingesting | ✅ measured (run 1) | merged 26 Oct: a processing document is askable after its first indexed batch; answers say "first n of N pages"; final index byte-identical with or without partial queries (test). Run 1 (T4): askable 206 s after upload of a 1,000-page PDF (96 pages indexed); answer correct and cited |
 | F7 token auth, upload limits | ✅ | merged 26 Oct: `--token` (Bearer or HttpOnly session cookie), one upload per client IP, optional daily quota; 32 tests; login form checked in Chrome against the demo server (401 → form → unlocked). No rate limit on token guesses; behind a proxy all users share one IP |
-| F4 US Code section questions | ✅ measured (not held out) | cause: bold section heading directly followed by a bold sub-heading, chunks kept only the latest; fix: chunks carry the last section number (text unchanged). Run 2 (T4): sections identified 355 → 1,877; US Code recall@5 0.75 → 0.92, answerable 6/12 → 7/12, §164/§6501/§7203 now correct. Held-out check on Title 21 in the final run |
-| GPU run 1 (regression + tiers 100/1,000 + streaming load test + partial ask + F4 diagnosis + layout model on GPU) | ✅ done | 26 Oct, 50 min on T4 ×2: English 76.9% (same 12 failures), multilingual 94.4%, tiers 100/1,000 unchanged with recovery passing, partial ask correct at 96/1,000 pages, first words 0.5 s (1 user), 0 failed requests up to 8 users; layout-on-GPU inconclusive (CUDA 13 libs missing). SCALE.md "Sprint run 1" |
-| GPU run 2 (F11, F4, layout model on GPU, two Ollama slots) | ✅ | two-slot load test confounded (a second model copy on the same GPU); default kept. 27 Oct, T4 ×2, notebook `notebook4b1ff5d5fe`; results in SCALE.md "Sprint run 2" |
-| GPU run 3 — FINAL (identity check CPU vs GPU tables; six tiers with recovery; real documents, final use of the 46 questions; held-out set 2, single use; regression) | 🔧 running | started 27 Oct ~00:35 IST, notebook `notebookcd9bf75c36`, code snapshot run3 (diff 433e8647). Code is frozen for measured behaviour from this point |
-| Project notebook top to bottom on a T4 (incl. the GPU table-detection cell) | 🔧 running | notebook `notebook418adfeb08`, same snapshot |
+| F4 US Code section questions | ✅ measured (not held out) | cause: bold section heading directly followed by a bold sub-heading, chunks kept only the latest; fix: chunks carry the last section number (text unchanged). Run 2 (T4): sections identified 355 → 1,877; US Code recall@5 0.75 → 0.92, answerable 6/12 → 7/12, §164/§6501/§7203 now correct. Held-out check on Title 21 (final run, 27 Oct): 19/25 answerable, 4/5 refused, recall@5 0.917; the 9 questions naming a section 8/9 correct |
+| GPU run 1 (regression + tiers 100/1,000 + streaming load test + partial ask + F4 diagnosis + layout model on GPU) | ✅ done | 26 Oct (~22:45–23:35 IST), 50 min on T4 ×2: English 76.9% (same 12 failures), multilingual 94.4%, tiers 100/1,000 unchanged with recovery passing, partial ask correct at 96/1,000 pages, first words 0.5 s (1 user), 0 failed requests up to 8 users; layout-on-GPU inconclusive (CUDA 13 libs missing). SCALE.md "Sprint run 1" |
+| GPU run 2 (F11, F4, layout model on GPU, two Ollama slots) | ✅ | two-slot load test confounded (a second model copy on the same GPU); default kept. 26–27 Oct, T4 ×2, notebook `notebook4b1ff5d5fe`; results in SCALE.md "Sprint run 2" |
+| GPU run 3 — FINAL (real documents, final use of the 46 questions; held-out set 2, single use; regression; six tiers) | ✅ done (tiers failed to start) | 27 Oct (~00:35–02:30 IST), notebook `notebookcd9bf75c36`, T4 ×2, snapshot run3 (base 2623aa1 + diff 433e8647; same behaviour as the pushed commits except 9 later review fixes that change no chunk text). Identity check passed: parsing with table detection on the GPU gave byte-identical pages to the CPU on all 8 PDFs (3 benchmark, 4 multilingual incl. the scanned one, scale-100), so the run used the GPU; one document at a time on GPU 0. Real documents: 30/37 answerable correct (26/37 before the sprint fixes), 6/9 unanswerable refused (unchanged); 9/11 Report 12/12, Statistical Abstract 11/13, US Code Title 26 7/12; Statistical Abstract parse 521 s (earlier 17.5 min on CPU with two documents at once). Held-out set 2: Title 21 19/25, 4/5 refused, recall@5 0.917; CAG Hindi 9/14 answers only; GAO not run. Regression: English 76.9% (same 12 failures), multilingual 94.4%. **The six synthetic tiers did not run**: the scale job failed at start because two jobs downloaded the model into the same Ollama directory at the same moment (`ollama pull ... failed: remove /root/.ollama/...`); re-run is GPU run 4. SCALE.md "Final run" |
+| GPU run 4 (six tiers, scale only) | ✅ done | 27 Oct (~02:50–05:55 IST), notebook `notebookf8de2130c7`, T4 ×2 (tiers on GPU 1), snapshot run4 (base e7abee2 + diff fce5cf45: the model-download retry), table detection on the GPU, scale job alone; exit 0 after 10,916 s. All six tiers passed: chunks, recall@5 (0.972 → 0.889), MRR, answer accuracy (0.69–0.75) and refusals identical to run v1; citation precision identical except 100 pages (0.917 vs 0.931). Ingest 10,000 pages 2,214 s = 36.9 min (run v2, CPU table detection, also alone: 4,237 s); 4.3–4.6 pages/s. Recovery passed at every tier (resumed 10,000-page job 2,209 s in total). Peak RAM 5.6–9.4 GB (run v1: 3.3–7.1 GB). Numbers read from the run log (results archive not downloaded). SCALE.md "Six synthetic tiers (run 4, final code)" |
+| Project notebook top to bottom on a T4 (incl. the GPU table-detection cell) | ✅ | 27 Oct, Kaggle T4 (one card), code snapshot run3: completed without errors in 34.5 min; the new cell switched table detection to the GPU; English benchmark 12 of 61 failed (76.9%, same as before); GPU memory 9,069 of 15,360 MB |
 | Independent code review of the sprint diff | ✅ | 10 findings (27 Oct). 9 fixed with regression tests after the final-run snapshot was taken: chunk section number after an overflow, token/step event order, presupposition refusal flags, no second generation after a timeout, partial-index race and duplicate builds, quota bypass without Content-Length, quota charged for duplicates/rejections, API docs public in token mode. Chunk text identical on the benchmark PDFs. Not fixed: an over-quota upload is reported by the browser as a closed connection (the server answers 413 before reading the body) |
-| Unit suite | ✅ | 843 passed, ruff clean (27 Oct, after the review fixes); 829 at the final-run snapshot |
-| F6 "which table" answers | ✅ code / ⏳ GPU | merged 26 Oct: deterministic, no prompt change; appends the first cited table's caption when the answer omits the number; 40 tests. Effect measured in run 1 (English table questions, synthetic page_ref) |
+| Docs audit against evidence | ✅ | 27 Oct: 29 discrepancies found (stale limitations, run dates, a page count, authorship wording) and fixed in README, RESULTS, SCALE, STATUS, DEPLOY and the report; report rebuilt (5 pages) |
+| Demo readiness | 🔧 | demo questions verified (USS Cole 17; page 4,512 = Table 346.13; Veloria 2031 unanswerable; live upload scale-250). **Colab rehearsal of the web app (27 Oct, free Colab T4):** notebook ran to section 7b without errors, GPU table detection active, the app opened through Colab's port proxy; NIST paper (64 pages) processed in 79 s with live progress; streamed answer then verified answer with page citations (11 s); citation opened page 10 with the passage highlighted; 250-page synthetic PDF processed in about 2 min and the page-17 table question answered correctly (Table 1.9). The 250-page PDF finishes too fast to show asking while processing: use a 1,000-page PDF for that step. Screens saved locally; a screen recording of the full script is still to be made by the presenter |
+| Model download race (cause of run 3's scale failure) | ✅ | `OllamaLLM.ensure_ready` now waits and re-checks after a failed pull, then retries once (two servers sharing one model directory); 2 tests. Run kits start the second job only after the first model is ready |
+| Unit suite | ✅ | 845 passed, ruff clean (27 Oct); 829 at the final-run snapshot |
+| F6 "which table" answers | ✅ measured (final run) | merged 26 Oct: deterministic, no prompt change; appends the first cited table's caption when the answer omits the number; 40 tests. Final run (27 Oct, T4): "which table" questions on the Statistical Abstract 5/6 correct (wrong: statab-q10); English table questions unchanged 10/12 in runs 1–2 |
 | F12 source viewer polish | ✅ code | merged 26 Oct: citation scrolls the source pane to the highlight (seen in Chrome), focus styles, live region announces only the final answer, phone close button; 390 px layout not seen in a browser |
 | F11 presupposition refusals (flag, off by default) | ✅ measured, not adopted | run 2 (T4): English 76.9% with the same failures but false refusals 1.9% → 3.8%; multilingual unchanged. No benefit, stays off |
-| F8 report and docs | 🔧 | report draft rebuilt (5 pages): final framing, users, long-document architecture, 26 Oct scale and real-document tables, limitations; GPU-pending items marked `\pending{}`. `docs/DEMO.md` written. Final numbers after the last run |
+| F8 report and docs | 🔧 | report draft rebuilt (5 pages): final framing, users, long-document architecture, 26 Oct scale and real-document tables, limitations; GPU-pending items marked `\pending{}`. `docs/DEMO.md` written. Final-run numbers filled in 27 Oct; six-tier numbers from run 4 filled in 27 Oct |
 
 ## Scale round (2026-10-26, evening)
 
@@ -41,12 +45,12 @@ recovery, measured on the target GPU. Details and every number: [SCALE.md](SCALE
 | Crash-isolated parse workers (per-page timeouts, restart, empty-page fallback) | ✅ measured | a killed worker cost exactly one page at every tier; hang and crash unit tests |
 | Persistent index (fp16 vectors, BM25 sparse matrix on disk) | ✅ measured | 188 MB and 0.7 s cold load at 10,000 pages; BM25 0.6 ms vs 27 ms per query at 40k chunks, identical rankings |
 | Document library + web app (upload, background queue, progress, citations with highlighted source pages, delete/retry, several users) | ✅ measured | 0 failures with 1–8 concurrent users on a T4; visual QA in Chrome with fake models; review-found races fixed with regression tests |
-| Page and section references in questions ("page 4,512", "section 7203") | ✅ page / ⚠️ section | page questions rank 3–4 instead of 87–895 before reranking; section routing neutral on the US Code (headings not identified in that PDF) |
+| Page and section references in questions ("page 4,512", "section 7203") | ✅ page / ⚠️ section | page questions rank 3–4 instead of 87–895 before reranking; section routing on the US Code improved by the section fix (sprint run 2: recall@5 0.75 → 0.92, answerable 6/12 → 7/12; not held out, 5 of 12 still wrong) |
 | Garbled text layers → OCR; per-chapter running headers removed | ✅ unit-tested | no change on the benchmark PDFs except 8 BEA chunks losing a repeated date |
 | Independent evaluation: synthetic corpus (240 questions over 6 tiers) and real PDFs (46 questions) | ✅ | written separately by authors who did not see the existing benchmark or its failures |
 | Notebook (streaming ingest with progress line, web-app cell) | ✅ | executed top to bottom on a Kaggle T4 (one card) in 32.7 min, no errors |
 
-Test suite: **571 passed** (`pytest -q`), `ruff check` clean.
+Test suite: **571 passed at that time** (historical; the current count is 845, see the sprint table above), `ruff check` clean.
 
 ## Implemented and verified
 
@@ -71,7 +75,7 @@ Test suite: **571 passed** (`pytest -q`), `ruff check` clean.
 | Calculator tool for quantitative questions (operand extraction → grounding check → AST-safe evaluation) | ✅ / ⚠️ | unit tests incl. 30 grounding tests; operands must sit on the cited row and column, ungrounded extractions are retried once then dropped; numerical questions are still 2/6 because the 7B model often picks a grounded but wrong cell (RESULTS §0) |
 | Independent code review | ✅ | 7 confirmed edge-case bugs (empty pools, sub-query slot eviction, stale verdict/hint, non-finite calculator results, cache key, ablation config) fixed with regression tests |
 
-Test suite: **472 passed**, offline, ~15 s (`pytest -q`). `ruff check .` clean.
+Test suite: **472 passed at that time** (historical; current count 845), offline, ~15 s (`pytest -q`). `ruff check .` clean.
 
 ## Validation round on Kaggle (2026-10-26)
 
@@ -133,17 +137,22 @@ not distinguished by script detection. The multilingual set is 20 questions, sin
 
 0. **Scale round findings** (see SCALE.md):
    - Ingestion of table-heavy PDFs is slow on 2 CPUs: about 2.3–2.9 pages/s (10,000 pages ≈ 71 min;
+     37 min with the opt-in GPU table detection, run 4, at the cost of up to 9.4 GB peak RAM;
      the Budget Appendix 1,224 pages ≈ 34 min). PyMuPDF's ONNX table model is ~80% of it; the
      faster line-only detector invents tables in academic papers, so it is not used.
-   - Long legal codes: questions naming a section ("section 7203") still fail on the US Code; the
-     section headings of that PDF are not yet identified.
+   - Long legal codes: questions naming a section ("section 7203") failed on the US Code because chunks
+     kept only the latest of two consecutive bold headings. Fixed in the sprint (each chunk records its
+     section number; run 2: sections identified 355 → 1,877, recall@5 0.75 → 0.92, answerable 6/12 → 7/12,
+     not held out). 5 of 12 questions are still wrong (numeric, multi-hop, a definition); the held-out
+     check on a new legal code (US Code Title 21, final run): 19/25 answerable, 4/5 refused.
    - Questions that presuppose something absent from the document (an act passed after it was
      written) are sometimes answered from the nearest related passage: 6/9 unanswerable real-document
      questions refused.
    - "Which table…" answers sometimes omit the table number although the right table is retrieved.
+     F6 (deterministic table naming) was added in the sprint; final run: 5/6 "which table" questions on the Statistical Abstract correct (statab-q10 wrong).
    - ~~Questions cannot be asked about a document while it is still being ingested~~: fixed on
-     26 Oct (F3, answers from the indexed pages so far, labelled as partial); unit-tested, T4
-     measurement pending.
+     26 Oct (F3, answers from the indexed pages so far, labelled as partial); unit-tested. Measured
+     in run 1 on a T4: askable 206 s after upload with 96/1,000 pages indexed, answer correct and cited.
    - The phone-width layout of the web app was checked with CSS/static tests only; a 390 px browser window could not be produced on the test machine (26 Oct).
    - The synthetic corpus is template prose; real documents were limited to four US federal PDFs.
 
@@ -169,8 +178,7 @@ not distinguished by script detection. The multilingual set is 20 questions, sin
    2-page Hindi scan only (word recall 0.99–1.00, 2/2 questions); quality depends on the scan.
 6. **Not yet built:** visual/ColPali retrieval (deliberately deferred: the text
    pipeline already reaches 95% page recall, and a VLM would roughly double
-   VRAM and latency), cross-document questions in the benchmark, streaming
-   answers in the UI.
+   VRAM and latency), cross-document questions in the benchmark.
 7. **PyMuPDF is AGPL-3.0.** This must be considered when a license is chosen; a
    permissive license would need `pypdfium2` instead.
 

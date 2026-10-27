@@ -3,6 +3,22 @@
 All numbers come from code in this repository and can be reproduced. Section 4
 lists the exact commands.
 
+## 0000. Final run (2026-10-27, Kaggle T4 x2)
+
+Full tables and method: [SCALE.md](SCALE.md#final-run-kaggle-t4-27-oct). Code snapshot `run3` (table detection
+on the GPU, parsing identical to the CPU path on all 8 test PDFs), one document at a time.
+
+| Measurement | Result |
+|---|---|
+| The 46 real-document questions (final, single use) | **30/37 answerable correct** (26/37 before the sprint fixes), 6/9 unanswerable refused (unchanged). 9/11 Report 12/12 (was 11/12), Statistical Abstract 11/13 (was 9/13), US Code Title 26 7/12 (same as run 2) |
+| "Which table" questions, Statistical Abstract | 5/6 correct (wrong: statab-q10) |
+| Statistical Abstract parse | 521 s (8.7 min), ingest 942 s; earlier 17.5 min parse / 23.8 min ingest with CPU table detection while two documents ran at once on the same 4 vCPUs, so not a like-for-like comparison |
+| Held-out set 2, US Code Title 21 (single use) | 19/25 answerable, 4/5 unanswerable refused, page recall@5 0.917, MRR 0.769, citation precision 0.741; questions naming a section 8/9 |
+| Held-out set 2, CAG Hindi GST report (answers only) | 9/14 answerable (Hindi 6/7, Hinglish 2/3, English 1/4); 2/4 unanswerable refused, checked against the executive summary only |
+| Held-out set 2, GAO Cost Guide | not run: gao.gov answered HTTP 403 to the download from Kaggle; its 22 questions remain unused |
+| Regression | English 76.9% (same 12 failures), multilingual 94.4% |
+| Six synthetic tiers, 100 to 10,000 pages (run 4, 27 Oct, notebook `notebookf8de2130c7`, table detection on the GPU) | Run 3's scale job failed at start (two jobs pulled the model into the same Ollama directory at the same time), so the tiers were re-run alone. All six passed: recall@5 0.972 → 0.889 and answer accuracy 0.69–0.75 from 100 to 10,000 pages, identical to run v1; refusals 3/4–4/4; answer p50 6.0–6.8 s. 10,000 pages ingested in 36.9 min (4.5 pages/s; 4,237 s with CPU table detection in run v2). Crash isolation and resume passed at every tier. Peak RAM 5.6–9.4 GB |
+
 ## 000. Sprint run 1 (2026-10-26, late evening, Kaggle T4)
 
 Regression check of the sprint changes (token streaming, ask while processing, "which table" naming,
@@ -10,6 +26,13 @@ access token) with the default agent: **English 76.9%** (the same 12 failures as
 questions 10/12, numerical 2/6), unanswerable 9/9, citation precision 78.4%; **multilingual 94.4%**
 (17/18; Hindi 9/9, Hinglish 3/3, Marathi 4/4). No regression. Streaming: first words after 0.5 s
 (median, one user). Details: [SCALE.md](SCALE.md#sprint-run-1-streaming-ask-while-processing-regression-kaggle-t4-26-oct-late-evening).
+
+**Sprint run 2 (26–27 Oct, Kaggle T4).** Section numbers on chunks (US Code Title 26): sections identified
+355 → 1,877, page recall@5 0.75 → 0.92, answerable 6/12 → 7/12 (not held out: this document was used to find
+the cause; 5 of 12 are still wrong). The layout model on the GPU parsed a 1,000-page table-heavy PDF 1.89x
+faster (224.7 s → 119.0 s) with identical output. The presupposition check stayed off: no gain, and false
+refusals rose from 1.9% to 3.8%. The two-slot Ollama load test is confounded (a second copy of the model
+shared the GPU), so one slot is kept. Details: SCALE.md, "Sprint run 2".
 
 ## 00. Long documents, real documents and several users (2026-10-26, evening)
 
@@ -20,7 +43,7 @@ Full tables and method: [SCALE.md](SCALE.md). All measured on a Kaggle Tesla T4,
 | Synthetic PDFs, 100 → 10,000 pages, 40 independent questions each | answer accuracy 0.750 → 0.722 (answerable), page recall@5 0.972 → 0.889, answer p50 6.5 → 6.4 s |
 | Ingestion, 10,000 pages (58% table pages), 2 parse workers | 71 min (2.3 pages/s), 53,862 chunks, index 188 MB, cold load 0.7 s, retrieval GPU memory 2.4 GB |
 | Failure recovery at every tier (killed worker + job interrupted half-way) | resumed from the checkpoint; index identical to a clean run except the crashed page; +1.4% total time at 10,000 pages |
-| Real PDFs (9/11 Report, Statistical Abstract, US Code Title 26; 46 independent questions) | 26/37 answerable correct (70%), 6/9 unanswerable refused; US Code weakest (6/12) |
+| Real PDFs (9/11 Report, Statistical Abstract, US Code Title 26; 46 independent questions) | 26/37 answerable correct (70%), 6/9 unanswerable refused; US Code weakest (6/12; 7/12 after the section fix in sprint run 2, not held out) |
 | Web server, 1–8 concurrent users | 0 failed requests; about 10.5 answers/min on one T4; p50 latency 13 s (1 user) → 45 s (8 users, queueing) |
 | This benchmark (section 0) on the new architecture | English 76.9% with the same 12 failures, multilingual 94.4%: no regression |
 | Project notebook, top to bottom on one T4, with the new progress line and web-app cell | completed in 32.7 min with no errors; same 12/61 English failures |

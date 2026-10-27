@@ -155,7 +155,7 @@ pip install "onnxruntime-gpu[cuda,cudnn]"
 export LOCAL_RAG_ONNX_GPU=1                     # then start the server as usual
 ```
 
-Measured on a Kaggle T4 (27 Oct 2026): a 1,000-page, table-heavy PDF parsed 1.89x faster
+Measured on a Kaggle T4 (26–27 Oct 2026): a 1,000-page, table-heavy PDF parsed 1.89x faster
 (224.7 s to 119.0 s) with byte-identical output. Each parse worker holds about 0.7 GB of GPU
 memory, so budget that per worker next to the language model (`LOCAL_RAG_PARSE_WORKERS`). If the
 CUDA provider cannot be loaded, the workers silently fall back to the CPU. The Colab notebook
@@ -261,11 +261,11 @@ without a usable GPU or model in this session).
 | `docker compose up`, including the model pull, GPU reservation and `/api/health` OK | **Not run** |
 | GPU visibility inside the container (`--gpus all`) | **Not run** |
 | The pip + Ollama commands above on a clean machine | **Not run** (they are the project's existing commands plus the apt and Ollama installer steps) |
-| `scripts/smoke_install.sh` against a real Ollama model (answer text, `417` in the answer) | **Not run** |
+| `scripts/smoke_install.sh` against a real Ollama model (answer text, `417` in the answer) | Passed on a Kaggle T4, 26 Oct (1 citation) |
 | Colab notebook | Not re-run for this change; the notebook is unchanged. Earlier benchmark runs used the same code on a T4 (see README) |
 | `--token` / `LOCAL_RAG_TOKEN`: 401 without credentials, Bearer, cookie from `POST /api/session`, wrong token, health and static files public, SSE and page images with the cookie only, logout (`tests/test_server_auth.py`, FastAPI test client) | Passed |
 | One in-flight upload per address (429), daily quota (413), non-PDF bodies rejected by magic bytes (`tests/test_server_auth.py`) | Passed |
-| The browser login form and retry in `app.js` (JavaScript syntax checked with `node --check` only) | **Not run** in a browser |
+| The browser login form and retry in `app.js` (JavaScript syntax checked with `node --check`) | Checked in Chrome against the demo server (26 Oct): 401, then the token form, then unlocked |
 | Cookie behaviour over real HTTPS (`Secure` flag, proxy `X-Forwarded-Proto`) | **Not run** (header logic only, unit-tested) |
 | Quota and 429 behind a reverse proxy (all users share the proxy address) | **Not run**, known limitation |
 | TLS / authentication proxy in front of the app | **Not run** |

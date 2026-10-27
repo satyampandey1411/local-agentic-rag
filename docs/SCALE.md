@@ -8,7 +8,7 @@ next to it. Tiers or documents that were not run are marked as such; nothing is 
 
 ## Summary
 
-* **Every tier from 100 to 10,000 pages was run end to end on a T4**: ingestion, retrieval,
+* **Every tier from 100 to 10,000 pages was run end to end on a T4 (run v1, 26 Oct)**: ingestion, retrieval,
   40 answered questions per tier, and a failure-recovery test. No tier failed, no OCR page was
   lost, and GPU memory for retrieval stayed at 2.4 GB at every size.
 * **Answer quality holds as documents grow 100×.** Answer accuracy on answerable questions is
@@ -16,24 +16,149 @@ next to it. Tiers or documents that were not run are marked as such; nothing is 
   from 0.97 (100 pages) to 0.89 (10,000 pages).
 * **Ingestion time grows linearly**: about 2.3–2.9 pages/s with 2 parse workers (the free-Colab
   CPU count), so a 10,000-page table-heavy PDF takes about 71 minutes. About 80% of that is
-  table detection.
+  table detection. With table detection on the GPU (opt-in) it is 4.3–4.6 pages/s and 37 minutes
+  (run 4, below).
 * **Failures are recoverable**: at every tier a parse worker was killed and the job was
   interrupted half-way. The job resumed from its checkpoint, and the index matched a clean run
   except for the one crashed page.
 * **The existing benchmarks did not regress** with the new architecture: English 76.9% (the same
   12 questions fail as before), multilingual 94.4%.
+* **Final run (27 Oct, T4 ×2): the 46 real-document questions, used a final time, gave 30/37 answerable
+  correct (26/37 before the sprint fixes) and 6/9 unanswerable refused (unchanged).** On a new legal
+  code the system had not been tuned on (US Code Title 21, held-out set 2, single use): 19/25
+  answerable, 4/5 refused, page recall@5 0.917. A Hindi audit report (answers only): 9/14. The GAO
+  Cost Guide was not run (download refused, HTTP 403).
+* **Six tiers on the final code (run 4, 27 Oct, table detection on the GPU):** every tier passed again,
+  with the same retrieval and answer quality as run v1, and recovery passed at every tier. A
+  10,000-page PDF now ingests in 36.9 min (4.5 pages/s), about half the time with CPU table detection;
+  peak RAM rose to 9.4 GB.
 * **Several users**: the real web server served 1–8 concurrent users with no failed request.
   Throughput saturates at about 10.5 answers per minute with two answers running at a time on
   one T4; beyond that, users queue.
 
-## Sprint run 2: legal sections, table detection on the GPU, presupposition check (Kaggle T4, 27 Oct)
+## Final run (Kaggle T4, 27 Oct)
+
+Kaggle notebook `notebookcd9bf75c36`, Tesla T4 x2, 27 Oct 2026 (about 00:35-02:30 IST). Code snapshot
+`run3` (base 2623aa1 plus diff 433e8647): the same behaviour as the pushed commits, except for 9 later
+review fixes that change no chunk text. Table detection ran on the GPU (`LOCAL_RAG_ONNX_GPU=1`); an
+identity check in the same run found the parsed pages byte-identical to the CPU path on all 8 test
+PDFs. One document was processed at a time on GPU 0. All numbers below are generated from the run's
+own JSON files (`local/kaggle/sprint/run3/SUMMARY.md`).
+
+### Real documents (`benchmark/realdocs`; final, single use of the 46 questions)
+
+"Before" is the earlier measured run (26 Oct). Questions whose evidence quote was not located in the
+PDF are left out of the page metrics (recall@5, MRR, citation precision): 911-q01 (9/11 Report);
+statab-q01, statab-q05, statab-q11 (Statistical Abstract).
+
+| Document | Pages | Answerable correct (before → final) | Unanswerable refused (before → final) | Recall@5 / MRR | Citation precision | Answer p50 | Ingest (chunks) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 9/11 Report | 585 | 11/12 → **12/12** | 1/3 → 1/3 | 1.000 / 0.939 | 0.727 | 6.5 s | 46 s (2,126) |
+| Statistical Abstract 2012 | 940 | 9/13 → **11/13** | 3/3 → 3/3 | 1.000 / 1.000 | 0.950 | 7.3 s | 942 s = 15.7 min; parse 521 s = 8.7 min (20,965) |
+| US Code Title 26 | 4,211 | 7/12 (run 2) → **7/12** | 2/3 → 2/3 | 0.917 / 0.727 | 0.736 | 21.1 s | 700 s = 11.7 min (34,368) |
+| Budget Appendix 2026 | 1,224 | no questions (ingest only) | - | - | - | - | 1,439 s = 24.0 min (16,523) |
+| **Overall** | | **30/37** (26/37 before the sprint fixes) | **6/9** (6/9 before) | | | | |
+
+Wrong answers: 9/11 Report 911-q05 and 911-q15 (both unanswerable questions that were answered);
+Statistical Abstract statab-q03 (section reference) and statab-q10 (lookup); US Code Title 26
+uscode26-q06 (unanswerable, answered), q08 (section reference), q09 and q12 (numeric), q14
+(definition), q15 (multi-hop).
+
+**Ingest time is not a like-for-like comparison.** The earlier Statistical Abstract run took 23.8 min to
+ingest (17.5 min to parse) with table detection on the CPU, while two documents were processed at
+once on the same 4 vCPUs. In this run the GPU did the table detection and one document ran at a time:
+942 s ingest (15.7 min), parse 521 s (8.7 min). The speed-up cannot be attributed to the GPU alone,
+because the contention changed too. (The separate controlled test in Sprint run 2 measured the GPU
+effect alone: 224.7 s → 119.0 s on a 1,000-page PDF, identical output.)
+
+**"Which table" questions, Statistical Abstract: 5/6 correct** (statab-q02, q06, q07, q08, q11 correct;
+statab-q10, retail sales of electricity by state, wrong). The questions are the "lookup" type; the
+sprint's table-naming change (F6) was active in this run.
+
+### Held-out set 2 (`benchmark/heldout2`; single use)
+
+Questions were written without the system by an author who read only the official sources.
+
+| Document | Pages | Answerable correct | Unanswerable refused | Recall@5 / MRR | Citation precision | Answer p50 | Ingest (chunks) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| US Code Title 21 | 1,034 | **19/25** | 4/5 | 0.917 / 0.769 (24 questions located) | 0.741 | 12.1 s | 145 s (7,687) |
+| CAG Hindi GST audit report (answers only, no page metrics) | 190 | **9/14** | 2/4, reported separately (below) | - | - | 13.6 s | 23 s (585) |
+| GAO Cost Guide | - | **not run** | - | - | - | - | - |
+
+* **US Code Title 21**: the 9 questions that name a section (for example "21 U.S.C. 333(a)(1)") were 8/9 correct. Wrong:
+  t21-q05 (section reference), q11, q12, q17 (lookup), q24, q25 (multi-hop), q29 (unanswerable,
+  answered). This is the first test of the section-number fix on a legal code that was not used to design it.
+* **CAG Hindi report, answerable questions by language of the question:** Hindi 6/7, Hinglish 2/3,
+  English 1/4. Wrong: cag-q07, q08, q11, q14 (numeric), q12 (lookup).
+* **CAG unanswerable questions: 2/4 refused** (cag-q17 Hinglish and cag-q18 English refused; cag-q15
+  and cag-q16, both Hindi, were answered). These four were checked against the executive summary
+  only, so the two answered ones may in fact be answerable from the full report; read this as a
+  lower bound on refusal, not as two proven errors.
+* **GAO Cost Guide: not run.** gao.gov answered HTTP 403 to the download from Kaggle, so its 22
+  questions remain unused.
+
+### Regression on the same run
+
+English 76.9% (the same 12 failures as before: ax-q10, ax-q14, bea-q06, q08-q11, q13, q15, nist-q11, q13, q15),
+multilingual 94.4% (17/18; the one failure is ml-mr-shaniwarwada-q05). Unanswerable questions 9/9 refused in English.
+
+### Six synthetic tiers (run 4, final code)
+
+In this session the scale job failed at start: two jobs downloaded the model into the same Ollama
+directory at the same moment (`ollama pull ... failed: remove /root/.ollama/...`). The download now
+waits and retries once (`OllamaLLM.ensure_ready`), and the tiers were re-run as the only job on the
+machine: Kaggle notebook `notebookf8de2130c7`, Tesla T4 ×2 (tiers on GPU 1), 27 Oct 2026 (about
+02:50–05:55 IST), code snapshot `run4` (base e7abee2 plus diff fce5cf45: the download retry over the
+run 3 code). Table detection on the GPU (`LOCAL_RAG_ONNX_GPU=1`), 2 parse workers, 4 vCPUs. The job
+finished with exit code 0 after 10,916 s. Numbers are copied from the summary the job printed to the
+run log (`local/kaggle/sprint/run4/results/scale_summary_from_log.md`).
+
+| Pages | Ingest | Parse / index / BM25 (s) | Pages/s | Chunks | Peak RAM | Peak CUDA | Index on disk | Cold load | Recall@5 | MRR | Retrieval p50 | Answer acc. | Refusal | Citation precision | Answer p50 |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 30 s | 20 / 8 / 0.1 | 3.4 | 562 | 6.2 GB | 2.4 GB | 2 MB | 0.0 s | 0.972 | 0.935 | 318 ms | 0.750 | 4/4 | 0.917 | 6.3 s |
+| 250 | 58 s | 38 / 19 / 0.3 | 4.3 | 1,359 | 5.6 GB | 2.4 GB | 5 MB | 0.1 s | 0.972 | 0.938 | 334 ms | 0.722 | 3/4 | 0.889 | 6.3 s |
+| 1,000 | 3.8 min | 151 / 73 / 1.1 | 4.4 | 5,423 | 9.4 GB | 2.4 GB | 19 MB | 0.1 s | 0.944 | 0.951 | 305 ms | 0.722 | 3/4 | 0.815 | 6.1 s |
+| 2,500 | 9.3 min | 374 / 181 / 2.9 | 4.5 | 13,507 | 8.9 GB | 2.4 GB | 47 MB | 0.2 s | 0.944 | 0.885 | 313 ms | 0.694 | 4/4 | 0.871 | 6.8 s |
+| 5,000 | 18.2 min | 726 / 358 / 5.6 | 4.6 | 26,953 | 8.0 GB | 2.4 GB | 94 MB | 0.4 s | 0.917 | 0.860 | 306 ms | 0.750 | 3/4 | 0.903 | 6.3 s |
+| 10,000 | 36.9 min | 1,486 / 714 / 11.0 | 4.5 | 53,862 | 6.0 GB | 2.4 GB | 189 MB | 0.9 s | 0.889 | 0.893 | 312 ms | 0.722 | 3/4 | 0.819 | 6.0 s |
+
+* **Quality is unchanged from run v1 at every tier**: the same chunk counts, recall@5, MRR, answer
+  accuracy and refusals; citation precision is the same except at 100 pages (0.917 against 0.931).
+* **Ingestion is about twice as fast with table detection on the GPU**: 10,000 pages in 2,214 s
+  (36.9 min). Run v2 measured the same PDF at 4,237 s with CPU table detection, also alone on the
+  machine; parse time fell from 3,552 s (run v1) to 1,486 s. At 1,000 pages: 226 s against 326 s (run v2).
+* **Peak RAM is higher (5.6–9.4 GB against 3.3–7.1 GB in run v1).** Each parse worker loads the GPU
+  build of ONNX Runtime and its CUDA libraries. 9.4 GB is within free Colab's 12.7 GB, but with less
+  margin; GPU table detection stays opt-in.
+* The Ollama memory watchdog restarted the model runner several times (7 times in the part of the
+  log that was read); no tier failed and no answer errored.
+
+**Failure recovery (run 4).** At every tier a parse worker was killed on one page and the job was
+interrupted half-way, then resumed:
+
+| Pages | Worker crash isolated (page) | Interrupted at page | Resumed from page | Index identical to clean run (except the crashed page) | Time before / after resume |
+|---:|---|---:|---:|---|---:|
+| 100 | yes | 64 | 64 | yes | not in the log excerpt |
+| 250 | yes | 128 | 128 | yes | not in the log excerpt |
+| 1,000 | yes (page 333) | 512 | 512 | yes | 83 s / 151 s |
+| 2,500 | yes (page 833) | 1,264 | 1,264 | yes | 192 s / 371 s |
+| 5,000 | yes (page 1,666) | 2,512 | 2,512 | yes | 375 s / 730 s |
+| 10,000 | yes (page 3,333) | 5,008 | 5,008 | yes | 737 s / 1,472 s |
+
+The interrupted-and-resumed 10,000-page job took 2,209 s in total against 2,214 s for the clean
+ingest: nothing done before the interruption was repeated. One page was lost to the crash at each tier,
+as designed.
+
+## Sprint run 2: legal sections, table detection on the GPU, presupposition check (Kaggle T4, 26–27 Oct)
 
 **Section numbers on chunks (US Code Title 26).** The diagnosis (all 4,211 pages through the real parser)
 showed why "section 164" questions failed: in this PDF a bold section heading ("§ 164. Taxes") is
 followed directly by a bold sub-heading ("(a) General rule"), and each chunk kept only the latest
 heading, so the section number never reached the index. The PDF has no bookmarks to fall back on. Chunks
 now carry the number of the last numbered section as a separate field (chunk text and embeddings are
-unchanged, verified identical on the 7 development PDFs).
+unchanged). Chunk text identity was checked locally, with a stand-in embedder, on the 3 benchmark and 4 multilingual
+PDFs (7 in all); the separate check that GPU and CPU table detection parse 8 PDFs to identical pages belongs to
+the final run and is recorded in STATUS.md.
 
 | US Code Title 26, 15 questions | Before (run v4) | After |
 |---|---:|---:|
@@ -74,7 +199,7 @@ benchmark while the other ran the tiers below, sharing 4 vCPUs.
 | 100 | 51 s | 0.972 | 0.750 | 4/4 | 0.917 | 5.8 s | crash isolated, resumed at page 64, identical |
 | 1,000 | 435 s | 0.944 | 0.722 | 3/4 | 0.815 | 5.5 s | crash isolated, resumed at page 512, identical |
 
-Retrieval and answer quality are the same as run v1 at both sizes. The 1,000-page ingest was slower
+Retrieval and answer quality are the same as run v1 at both sizes (citation precision at 100 pages 0.917 vs 0.931). The 1,000-page ingest was slower
 than in run v1 (435 s against 340 s) because the regression job shared the CPUs: the same PDF took
 276 s through the web server once that job had finished, and 212 s to parse alone. The default
 parsing code path did not change.
@@ -97,7 +222,7 @@ With one or two users the first words appear in under a second (median). Beyond 
 questions wait in the queue, so the first words arrive later; throughput stays at 10 to 14 answers
 per minute on one T4. The `scripts/smoke_install.sh` check passed against this server.
 
-**Layout model on the GPU (opt-in): not measured.** The installed GPU build of ONNX Runtime needed
+**Layout model on the GPU (opt-in): inconclusive in run 1; measured in Sprint run 2 above (1.89×).** The installed GPU build of ONNX Runtime needed
 CUDA 13 libraries that the image did not have, so both settings ran on the CPU (212 s and 211 s for
 1,000 pages, identical output). This is recorded as inconclusive.
 
@@ -161,7 +286,7 @@ failing. The samples are small (3 questions per user).
 
 ## Existing benchmarks on the new architecture (run v1)
 
-| Benchmark | Before today's changes | After (streaming ingestion etc.) |
+| Benchmark | Before the sprint changes | After (streaming ingestion etc.) |
 |---|---:|---:|
 | English answer accuracy (agent) | 76.9% | 76.9%, same 12 failures |
 | English page recall@5 / citation precision | 0.962 / 0.784 | 0.962 / 0.784 |
@@ -202,18 +327,18 @@ questions refused.
   fixed version (v4) only accepts "§"/"Section"/dotted numbers and section starts written
   "§ 164. Taxes" inside the text. v4 is neutral (6/12, recall@5 0.75, same as before): in this
   PDF it only identifies §7701, so §164, §4081 and §7203 are still not found. The cause (how
-  these headings come out of the PDF) is not yet diagnosed. Routing is kept because it is
-  neutral here and unit-tested; the US Code section questions remain an open problem.
+  these headings come out of the PDF) was diagnosed and fixed in the sprint (see Sprint run 2
+  above).
 * **Statistical Abstract: "which table…" questions.** Retrieval was perfect (recall@5 1.00), but
   in 4 of 13 answers the model described the right table without its table number. A prompt
   change could target this, but it would be fitted to this held-out set, so it was not made.
 * **Questions that presuppose something absent.** "What powers does the Intelligence Reform
   Act of 2004 give the DNI?" (the report predates the Act) was answered from the report's
   recommendation of a National Intelligence Director; "the temperature in degrees" was
-  answered with "temperate". A check for named entities missing from the passages was
-  prototyped and dropped: on the existing benchmark it would also fire on answerable
-  questions (e.g. "On the Natural Questions…"), which is how an earlier strict-refusal rule
-  raised false refusals from 3.8% to 21.2%.
+  answered with "temperate". A check for named entities missing from the passages now
+  exists as an option that is off by default (Sprint run 2): it brought no gain and raised false
+  refusals from 1.9% to 3.8%, in line with how an earlier strict-refusal rule raised false
+  refusals from 3.8% to 21.2%.
 * **One unanswerable question is arguably answerable.** "Can I deduct the interest on my car
   loan?" was written as unanswerable (the deduction was added in 2025), but the 2023 code's
   personal-interest rule does answer "no", which is what the system said.
@@ -235,13 +360,13 @@ must go through OCR. Each tier has 40 questions over 9 types (lookup, table cell
 multi-hop, section-scoped, page reference, OCR-only, near-duplicate distractor, unanswerable).
 Each fact is planted at a known page, and planted depths are spread evenly over the
 document. The question templates are the same for every tier, so tiers are comparable. The
-questions were written by a separate agent that did not see the existing benchmark or its
+questions were written by a separate author who did not see the existing benchmark or its
 results. `validate_corpus.py` checks that every answer key is extractable from its gold page.
 
 **Real documents** (`benchmark/realdocs/`, `benchmark/scale/run_realdocs.py`). Four US
 federal publications (public domain): the FY2026 Budget Appendix (1,224 pages), the US Code
-Title 26 (4,211 pages), the 2012 Statistical Abstract (about 1,040 pages) and the 9/11
-Commission Report (585 pages). 46 questions were written by another separate agent from the
+Title 26 (4,211 pages), the 2012 Statistical Abstract (940 pages) and the 9/11
+Commission Report (585 pages). 46 questions were written by another separate author from the
 official HTML editions, without seeing the PDFs or this system's results. Each question
 carries a verbatim evidence quote; its gold page is the PDF page where that quote is found.
 The Budget Appendix exists only as PDF, so it has no questions and is measured for

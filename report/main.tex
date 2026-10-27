@@ -1,7 +1,7 @@
 % Local Agentic RAG for PDFs: hackathon final report (pdfLaTeX).
 % Build: ./build.sh   (or Overleaf: pdfLaTeX, main file main.tex)
 % Every number below is measured and labelled with its run. docs/RESULTS.md and docs/SCALE.md list where each one comes from.
-% \pending{} marks a number that the final GPU run will supply.
+% \pending{} marks a number that a GPU run has not yet supplied (none left in the text).
 \documentclass[10pt,a4paper]{article}
 
 \usepackage[T1]{fontenc}
@@ -152,9 +152,8 @@ every change on a fixed benchmark, and then scaled ingestion to 10,000 pages and
 \kicker{Still open}\par\vspace{2pt}
 \begin{itemize}
   \item Numerical questions on dense tables
-  \item Section questions on a 4,211-page legal code
+  \item Five of 12 US Code questions still wrong (numeric, multi-hop, a definition)
   \item Faster ingestion of table-heavy PDFs
-  \item GPU numbers for streaming and ask-while-processing
 \end{itemize}
 \end{multicols}
 \end{panel}
@@ -244,7 +243,7 @@ Tesseract CLI OCR at 300 dpi & The built-in OCR path lost about 30\% of the Hind
 \bottomrule
 \end{tabularx}}
 
-\textbf{Engineering for a free runtime.} The real limit was host RAM, not the GPU: the Ollama runner (the local LLM server, installed in about 40 s) grew by about 100\,MB per request until Colab killed the session.
+\textbf{Engineering for a free runtime.} The real limit was host RAM, not the GPU: the Ollama runner (the local LLM server, installed in 41\,s on Colab; 96\,s on Kaggle) grew by about 100\,MB per request until Colab killed the session.
 Memory-mapped weights, one request slot, retries and a watchdog that restarts the runner fixed it. In the final run
 the watchdog restarted the runner and no question failed. Parsed documents are cached by file hash, so re-runs skip parsing.
 
@@ -354,7 +353,7 @@ Scanned 2-page Hindi document, with OCR & 16 s \\
 Retrieval ablation, 7 configurations & 1.9 min \\
 English answers, 2 configurations $\times$ 61 & 14.3 min \\
 Multilingual answers, 2 configurations $\times$ 20 & 7.4 min \\
-Offline test suite (current code) & 780 tests \\
+Offline test suite (current code) & 845 tests \\
 \bottomrule
 \end{tabularx}}
 \end{minipage}
@@ -378,36 +377,37 @@ with 40 independently written questions per size, each fact planted at a known p
 not how accurate it is on real documents:} its prose is template text, and the same questions are used at every size so that sizes can be compared.
 \renewcommand{\arraystretch}{1.18}
 {\fontsize{8.4}{10.2}\selectfont
-\begin{tabularx}{\textwidth}{@{}*{6}{>{\raggedleft\arraybackslash}X}@{}}
+\begin{tabularx}{\textwidth}{@{}*{7}{>{\raggedleft\arraybackslash}X}@{}}
 \toprule
-\textbf{Pages} & \textbf{Ingest} & \textbf{Recall@5} & \textbf{Answer accuracy} & \textbf{Answer p50} & \textbf{Index on disk} \\ \midrule
-100 & 55 s & 0.972 & 0.750 & 6.5 s & 2 MB \\
-250 & 93 s & 0.972 & 0.722 & 6.5 s & 5 MB \\
-1,000 & 5.7 min & 0.944 & 0.722 & 5.9 s & 19 MB \\
-2,500 & 14.7 min & 0.944 & 0.694 & 6.9 s & 47 MB \\
-5,000 & 31.4 min & 0.917 & 0.750 & 6.4 s & 94 MB \\
-10,000 & 71.3 min & 0.889 & 0.722 & 6.4 s & 188 MB \\
+\textbf{Pages} & \textbf{Ingest (GPU tables)} & \textbf{Ingest (CPU)} & \textbf{Recall@5} & \textbf{Accuracy} & \textbf{Answer p50} & \textbf{Index on disk} \\ \midrule
+100 & 30 s & 55 s & 0.972 & 0.750 & 6.3 s & 2 MB \\
+250 & 58 s & 93 s & 0.972 & 0.722 & 6.3 s & 5 MB \\
+1,000 & 3.8 min & 5.7 min & 0.944 & 0.722 & 6.1 s & 19 MB \\
+2,500 & 9.3 min & 14.7 min & 0.944 & 0.694 & 6.8 s & 47 MB \\
+5,000 & 18.2 min & 31.4 min & 0.917 & 0.750 & 6.3 s & 94 MB \\
+10,000 & 36.9 min & 71.3 min & 0.889 & 0.722 & 6.0 s & 189 MB \\
 \bottomrule
 \end{tabularx}}
-\note{Kaggle T4, 26 Oct, run v1; default adaptive agent, 2 parse workers (the free-Colab CPU count). Answer accuracy is on the 36 answerable questions of each size.
-Ingestion grows linearly (2.3 to 2.9 pages/s); about 80\% of it is table detection. GPU memory for retrieval stayed at 2.4 GB at every size, and the cold index load is 0.7 s at 10,000 pages.}
+\note{Kaggle T4, final code, 27 Oct (run 4), 2 parse workers (the free-Colab CPU count). CPU column: the 26 Oct run, with identical recall and accuracy at every size.
+Accuracy is on the 36 answerable questions per size. Peak RAM up to 9.4 GB; at every size a killed parse worker cost one page and an interrupted job resumed from its checkpoint.}
 \vspace{3pt}
 
 \begin{minipage}[t]{0.52\textwidth}
-\textbf{Real documents} \enspace {\color{muted}\fontsize{8}{10}\selectfont (46 independent questions, Kaggle T4, 26 Oct, runs v2--v4)}\par\vspace{2pt}
+\textbf{Real documents} \enspace {\color{muted}\fontsize{8}{10}\selectfont (46 independent questions, Kaggle T4; 26 Oct runs v2--v4 and the final run, 27 Oct)}\par\vspace{2pt}
 \renewcommand{\arraystretch}{1.18}
 {\fontsize{8.2}{10}\selectfont
 \begin{tabularx}{\linewidth}{@{}X r r r r@{}}
 \toprule
  & \textbf{Pages} & \textbf{Ingest} & \shortstack[r]{\textbf{Answerable}\\\textbf{correct}} & \shortstack[r]{\textbf{Unanswerable}\\\textbf{refused}} \\ \midrule
-9/11 Report & 585 & 61 s & 11/12* & 1/3 \\
-Statistical Abstract & 940 & 23.8 min & 9/13 & 3/3 \\
-US Code, Title 26 & 4,211 & 15.5 min & 6/12 & 2/3 \\
+9/11 Report & 585 & 46 s & 11/12 $\to$ \textbf{12/12} & 1/3 \\
+Stat. Abstract & 940 & 15.7 min & 9/13 $\to$ \textbf{11/13} & 3/3 \\
+US Code T26 & 4,211 & 11.7 min & 6/12 $\to$ \textbf{7/12} & 2/3 \\
+\midrule
+\textbf{Total} & & & \textbf{30/37} (was 26) & 6/9 \\
 \bottomrule
 \end{tabularx}}
-\note{*12/12 read by hand: the answer says ``Seventeen'' and the key was ``17''. Overall 26 of 37 answerable (70\%) and 6 of 9 unanswerable.
-Two documents ran at once on 4 vCPUs, so ingest times include contention. A fourth PDF (Budget Appendix, 1,224 pages, 33.9 min) has no questions. The US Code fix for section questions was
-designed after seeing this set, so it is not a held-out test.}
+\note{Before $\to$ final run (27 Oct; GPU table detection, one document at a time). Earlier ingest (26 Oct): 61 s, 23.8 min, 15.5 min, with CPU table detection and two documents at once, so contention is included.
+Title 26's 7/12 equals run 2 (the section fix was designed on this set, so not held out). Budget Appendix (no questions): 24.0 min (33.9 before).}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.44\textwidth}
 \fontsize{8.7}{10.6}\selectfont
@@ -436,26 +436,25 @@ Throughput saturates at about 10.5 answers per minute. Median latency rises from
   \item Page references in questions (``page 4,512''): such pages now rank 3 to 4 instead of 87 to 895 before reranking
   \item Independent evaluation: 240 synthetic and 46 real-document questions written by a separate author
   \item Notebook runs top to bottom in 32.7 min with no errors
-  \item Access token and upload limits; 780 offline tests
+  \item Access token and upload limits; 845 offline tests
 \end{itemize}
 \end{tabularx}}
 
 \vspace{3pt}
-\kicker{Implemented and unit-tested, GPU measurement not yet made}\par\vspace{2pt}
+\kicker{New this week: measured on the GPU}\par\vspace{2pt}
 \renewcommand{\arraystretch}{1.2}
 {\fontsize{8.5}{10.3}\selectfont
 \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{37mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{50mm}@{}}
 \toprule
-\color{navy}Feature & \color{navy}\textbf{What exists} & \color{navy}\textbf{Number the final run will supply} \\ \midrule
-\unmeasured\ Token streaming & Ollama streaming, batched server events; demo server sends queued, started, steps, tokens, answer & First-token latency on a T4: \pending{} \\
-\unmeasured\ Ask while processing & A document is askable after its first indexed batch; the final index is byte-identical with or without partial queries (test) & Time to first answer, and accuracy on a partial index: \pending{} \\
-\unmeasured\ ``Which table'' naming & Appends the cited table's printed number when the answer omits it; no prompt change & Table questions on the 4 of 13 Statistical Abstract misses: \pending{} \\
-\unmeasured\ Layout model on the GPU & Opt-in setting for table-heavy PDFs (about 80\% of ingestion time) & Statistical Abstract parse, 17.5 min today: \pending{} \\
-\unmeasured\ Final re-run of the 46 real questions & Run once more at the end, after the fixes above & Answerable correct, 26/37 today: \pending{} \\
+\color{navy}Feature & \color{navy}\textbf{What exists} & \color{navy}\textbf{Measured on a T4} \\ \midrule
+\done\ Token streaming & Ollama streaming, batched server events; demo server sends queued, started, steps, tokens, answer & First words after 0.47\,s median with 1 user, 0.70\,s with 2 (T4, 26 Oct) \\
+\done\ Ask while processing & Askable after the first indexed batch; final index byte-identical with or without partial queries (test) & 1,000-page PDF askable 206\,s after upload (96 pages indexed); answer correct and cited (T4, 26 Oct) \\
+\done\ ``Which table'' naming & Appends the cited table's printed number when the answer omits it; no prompt change & Statistical Abstract ``which table'' questions 5/6 correct (T4, 27 Oct) \\
+\done\ Layout model on the GPU & Opt-in setting for table-heavy PDFs (about 80\% of ingestion time) & 1,000-page PDF: 119.0\,s, not 224.7\,s (1.89$\times$), same output. Stat. Abstract parse 8.7\,min (17.5\,min on CPU, two documents at once) \\
+\done\ Final re-run of the 46 real questions & Run once more at the end, after the fixes above & 30/37 answerable correct (26/37 before), 6/9 unanswerable refused (T4, 27 Oct) \\
 \bottomrule
 \end{tabularx}}
-\note{Also written but not exercised end to end: a Dockerfile with compose (the smoke script passes against the demo server; no image was built) and a CI workflow (runs after the first push).
-Each \pending{} is filled from the final GPU run; no figure in this report is an estimate.}
+\note{Written, not exercised end to end: a Dockerfile with compose (smoke script passes; no image built) and a CI workflow (passed on GitHub).}
 
 \newpage
 \subsection{Latest improvements: before and after}
@@ -480,23 +479,25 @@ Table captions and section labels & Look-alike arXiv tables could not be told ap
 
 \section{Limitations}
 \begin{itemize}
-  \item \textbf{Ingestion of table-heavy PDFs is slow on 2 CPUs:} 2.3 to 2.9 pages/s, so 10,000 pages take about 71 min and the 1,224-page Budget Appendix 34 min.
+  \item \textbf{Ingestion of table-heavy PDFs is slow on 2 CPUs:} 2.3 to 2.9 pages/s, so 10,000 pages take about 71 min and the 1,224-page Budget Appendix 34 min (37 min for 10,000 pages with the opt-in GPU table detection).
         The table model is about 80\% of that. A faster line-only detector invented tables in academic papers, so it stays off.
-  \item \textbf{Section questions on long legal codes.} On the US Code, questions that name a section (``section 7203'') still fail, because the section headings of
-        that PDF are not identified. Section routing is neutral there (6/12 before and after).
+  \item \textbf{Section questions on long legal codes.} On the US Code (Title 26) a bold section heading was directly followed by a bold sub-heading and chunks kept only
+        the latest, so only 355 sections were identified. Each chunk now records its section number: 1,877 sections, page recall@5 0.75 $\to$ 0.92, answerable 6/12 $\to$ 7/12
+        (run 2; not held out, the fix was designed on this set). \S164, \S4081, \S6501 and \S7203 are now correct; 5 of 12 are still wrong (numeric, multi-hop, a definition).
+        On a new legal code (US Code Title 21; held-out questions, single use, 27 Oct) 19/25 answerable are correct, 4/5 unanswerable refused, page recall@5 0.917, and 8 of the 9 questions naming a section are correct.
   \item \textbf{Questions that presuppose something absent} (an act passed after the report) are sometimes answered from the nearest passage:
         6 of 9 unanswerable real-document questions were refused. A stricter refusal rule raised false refusals from 3.8\% to 21.2\%, so it was not kept.
   \item \textbf{Small benchmarks.} 61 English and 20 multilingual questions from one annotator; 46 real-document questions; grading matches required facts and can miss a paraphrase.
         The synthetic corpus is template prose, and the real documents are four US federal PDFs.
   \item \textbf{Numerical questions} remain the weakest category (2/6): the 7B model often picks a number from the wrong row or column of a dense table.
   \item \textbf{Coverage.} Hindi, Hinglish and Marathi were measured on 20 questions; OCR on one 2-page scan; charts and figures are not interpreted.
-  \item \textbf{Shared use.} The token has no rate limit on guesses, and users behind a proxy share one upload slot. The phone layout was checked only with a headless DOM test.
+  \item \textbf{Shared use.} The token has no rate limit on guesses, and users behind a proxy share one upload slot. The phone layout was checked with CSS and static tests only; a 390\,px browser window was not available.
   \item \textbf{Licence.} PyMuPDF is AGPL-3.0, so the licence of a public release is undecided; a permissive one would need \texttt{pypdfium2}.
 \end{itemize}
 
 \section{Next steps}
-After the hackathon: cell-level table retrieval and a larger model (Qwen2.5-14B fits the measured headroom) for number extraction only; diagnose how the US Code
-headings come out of the PDF; a larger multi-annotator benchmark with an LLM judge, including Hindi and Marathi long documents; decide the licence and publish
+After the hackathon: cell-level table retrieval and a larger model (Qwen2.5-14B fits the measured headroom) for number extraction only; check the section
+fix on more legal codes; a larger multi-annotator benchmark with an LLM judge, including Hindi and Marathi long documents; decide the licence and publish
 with an ``Open in Colab'' link; rate limiting before any use beyond one trusted group.
 
 \end{document}
