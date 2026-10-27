@@ -17,8 +17,13 @@ Ollama registry).
 * **GPU:** an NVIDIA GPU is expected. Measured on a Tesla T4: **8.9 GB of 15 GB** of GPU
   memory in use with every model loaded (the 4-bit `qwen2.5:7b-instruct` language model in
   Ollama, the BGE-M3 embedder and the bge-reranker-v2-m3 reranker in the app). Cards with less
-  memory than that are untested. CPU-only operation is not measured and would
-  be very slow for the 7B model.
+  memory than that are untested. Without a GPU the stack still works (`docker-compose.cpu.yml`,
+  below) but only for light use: on a 16-core laptop CPU a one-page test PDF took 40 s from upload
+  to a cited answer once the models were downloaded (27 Oct); long documents were not tried on a CPU.
+* **NVIDIA driver (GPU path):** the torch wheel pip installs today (2.14.1) is built for CUDA 13.0,
+  which needs a recent host driver (the R580 series or newer). With an older driver the container
+  starts but torch cannot use the GPU, so the embedder and reranker run on the CPU (`GET /api/health`
+  then shows `"device": "cpu"`). This combination was not tested on a GPU host.
 * **Host RAM:** the free Colab T4 has about 12.7 GB, and the pipeline runs there.
 * **Disk:** room for the models (the 7B model is a multi-GB download, plus the embedder and
   reranker) and for your library. A 10,000-page index was 188 MB (docs/SCALE.md); the PDFs are
@@ -58,6 +63,15 @@ scripts/smoke_install.sh http://127.0.0.1:8000
 
 Useful commands: `docker compose logs -f app`, `docker compose down` (keeps your data),
 `docker compose down -v` (deletes the library and the downloaded models).
+
+**No NVIDIA GPU.** Add the CPU override, which removes the GPU reservations:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
+```
+
+Disk: the app image is about 6.5 GB (torch with its CUDA libraries is installed either way), the
+Ollama image about 5 GB, the language model 4.7 GB and the embedder and reranker about 4.5 GB.
 
 **GPU with plain `docker run`.** The torch wheel installed by pip carries its own CUDA
 libraries, so the image only needs the host driver, exposed with `--gpus all`:
@@ -202,7 +216,10 @@ publishes the port on `127.0.0.1` only.)
 * **Optional daily quota** `LOCAL_RAG_UPLOAD_QUOTA_BYTES` (bytes per client address per UTC day).
   An upload that would exceed it answers `413` before its body is read (using `Content-Length`,
   which includes a few hundred bytes of multipart framing, so the check is slightly
-  conservative). Bytes are counted when an upload is accepted; rejected or aborted uploads are not
+  conservative). A browser (or a proxy in front) often cannot deliver such an early answer and
+  reports a dropped connection instead, so the web page first calls `GET /api/upload-check?size=N`
+  (same statuses and messages, no body, reserves nothing) and shows the real reason before it sends
+  the file. Bytes are counted when an upload is accepted; rejected or aborted uploads are not
   counted.
 * **Accounting is in memory**: counters reset when the server restarts and are not shared between
   processes (the server runs one).
@@ -248,8 +265,8 @@ This is a **single-tenant, single-user** tool for documents you are allowed to r
 
 ## Tested
 
-What was and was not checked for the files in this change (run on a development machine
-without a usable GPU or model in this session).
+What was and was not checked (development machine without an NVIDIA GPU; GPU results come from
+Kaggle and Colab T4 runs, which cannot run Docker).
 
 | Check | Result |
 |---|---|
@@ -257,9 +274,11 @@ without a usable GPU or model in this session).
 | Same script, failure cases: server unreachable, non-PDF upload, unanswerable question (refused, no citation) | Each exits non-zero with a message |
 | `docker compose config -q` (syntax of `docker-compose.yml`) | Passed |
 | `LOCAL_RAG_OLLAMA_HOST` / `LOCAL_RAG_MODEL` defaults and flag override (`tests/test_server_cli.py`) | Passed |
-| `docker build` of the `Dockerfile` | **Not run** |
-| `docker compose up`, including the model pull, GPU reservation and `/api/health` OK | **Not run** |
-| GPU visibility inside the container (`--gpus all`) | **Not run** |
+| `docker build` of the `Dockerfile` | **Passed** (27 Oct, Linux laptop, Docker 29.1): 6.5 GB image, Python 3.12, torch 2.14.1 (CUDA 13.0 build), Tesseract eng/hin/mar. First build 13 min; after a code change only the last layer is rebuilt |
+| `docker compose up`, including the model pull and `/api/health` OK | **Passed on the CPU** (27 Oct, with `docker-compose.cpu.yml`; the laptop has no NVIDIA GPU): Ollama healthy, `qwen2.5:7b-instruct` pulled (6 min), app healthy |
+| `scripts/smoke_install.sh` against the Compose stack (real 7B model, CPU) | **Passed** (27 Oct): "417 megawatts" with 1 citation on page 1. First run 8 min (downloads the embedder and reranker into the volume); warm run 40 s end to end |
+| GPU reservation in `docker-compose.yml` | **Not run** (no NVIDIA GPU or Container Toolkit on the test machine) |
+| GPU visibility inside the container (`--gpus all`), including the CUDA 13 driver requirement | **Not run** |
 | The pip + Ollama commands above on a clean machine | **Not run** (they are the project's existing commands plus the apt and Ollama installer steps) |
 | `scripts/smoke_install.sh` against a real Ollama model (answer text, `417` in the answer) | Passed on a Kaggle T4, 26 Oct (1 citation) |
 | Colab notebook | Not re-run for this change; the notebook is unchanged. Earlier benchmark runs used the same code on a T4 (see README) |
@@ -270,4 +289,4 @@ without a usable GPU or model in this session).
 | Quota and 429 behind a reverse proxy (all users share the proxy address) | **Not run**, known limitation |
 | TLS / authentication proxy in front of the app | **Not run** |
 
-Until the Docker and pip rows are run on a GPU host, treat those paths as written but unverified.
+The Docker image and Compose stack are verified on a CPU host; the GPU path inside Docker is still unverified until it is run on a GPU host with the NVIDIA Container Toolkit.

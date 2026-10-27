@@ -44,7 +44,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and rationale,
 ## Install
 
 `docker compose up --build` starts the web app, Ollama and the model on a GPU machine (app on
-`http://127.0.0.1:8000`); `scripts/smoke_install.sh` checks an install end to end (the image has not yet been built or tested on a GPU host; see docs/DEPLOY.md).
+`http://127.0.0.1:8000`); `scripts/smoke_install.sh` checks an install end to end. Without an NVIDIA GPU, add `-f docker-compose.cpu.yml` (slow). The image was built and passed the smoke test with the real 7B model on a CPU host (27 Oct); the GPU path inside Docker is not yet tested (see docs/DEPLOY.md).
 [docs/DEPLOY.md](docs/DEPLOY.md) has requirements, the pip + Ollama path, options and the
 security notes (single-user, localhost only by default).
 
@@ -181,9 +181,8 @@ ruff check src tests
 
 ## License
 
-Not yet licensed: this is a private repository, and a license will be chosen before any
-public release. Note that PyMuPDF (the PDF parser) is AGPL-3.0, which affects that choice;
-`pypdfium2` is the usual replacement if a permissive license is needed.
+Private repository, not licensed for redistribution. (PyMuPDF, the PDF parser, is AGPL-3.0; that
+would matter only if the project were ever distributed.)
 
 The English benchmark PDFs are downloaded from their public sources and are not stored in
 the repository. The multilingual test PDFs are generated from Wikipedia text

@@ -99,7 +99,7 @@ using open-weight models on a free Google Colab T4 GPU}\par
 \vspace{8pt}
 \begin{tabularx}{\textwidth}{@{}X r@{}}
   {\fontsize{9.5}{12}\selectfont\bfseries Satyam Kumar Pandey}\enspace
-  {\color{muted}\fontsize{9}{12}\selectfont\enspace open-source project}
+  {\color{muted}\fontsize{9}{12}\selectfont\enspace private project}
   &
   \tcbox[on line,colback=navy,colframe=navy,arc=8pt,left=6pt,right=6pt,top=2pt,bottom=2pt]
     {\color{white}\fontsize{8.5}{10}\selectfont\bfseries Final report \enspace·\enspace 31 October 2026}
@@ -120,7 +120,7 @@ Hosted chatbots can answer questions about them, but they cost money, send the d
 and often answer confidently when the PDF does not say. We build for people who cannot or should not upload such files:
 law students and small law firms working with statutes and contracts, government and NGO analysts in India with
 budget books, statistical abstracts and scanned Hindi or Marathi circulars, researchers, and compliance teams.
-Our goal is an open-source tool that answers questions about \emph{any} uploaded PDF, from a few pages to 10,000 pages,
+Our goal is a local tool that answers questions about \emph{any} uploaded PDF, from a few pages to 10,000 pages,
 under four constraints:
 
 \begin{itemize}
@@ -454,7 +454,7 @@ Throughput saturates at about 10.5 answers per minute. Median latency rises from
 \done\ Final re-run of the 46 real questions & Run once more at the end, after the fixes above & 30/37 answerable correct (26/37 before), 6/9 unanswerable refused (T4, 27 Oct) \\
 \bottomrule
 \end{tabularx}}
-\note{Written, not exercised end to end: a Dockerfile with compose (smoke script passes; no image built) and a CI workflow (passed on GitHub).}
+\note{Docker image built; install smoke test passed with the real model on a CPU host (27 Oct); GPU in Docker not yet tested. CI passes.}
 
 \newpage
 \subsection{Latest improvements: before and after}
@@ -491,13 +491,12 @@ Table captions and section labels & Look-alike arXiv tables could not be told ap
         The synthetic corpus is template prose, and the real documents are four US federal PDFs.
   \item \textbf{Numerical questions} remain the weakest category (2/6): the 7B model often picks a number from the wrong row or column of a dense table.
   \item \textbf{Coverage.} Hindi, Hinglish and Marathi were measured on 20 questions; OCR on one 2-page scan; charts and figures are not interpreted.
-  \item \textbf{Shared use.} The token has no rate limit on guesses, and users behind a proxy share one upload slot. The phone layout was checked with CSS and static tests only; a 390\,px browser window was not available.
-  \item \textbf{Licence.} PyMuPDF is AGPL-3.0, so the licence of a public release is undecided; a permissive one would need \texttt{pypdfium2}.
+  \item \textbf{Shared use.} The token has no rate limit on guesses, and users behind a proxy share one upload slot. The phone layout was checked at 390\,px in an emulated phone browser, not on a real phone.
 \end{itemize}
 
 \section{Next steps}
 After the hackathon: cell-level table retrieval and a larger model (Qwen2.5-14B fits the measured headroom) for number extraction only; check the section
-fix on more legal codes; a larger multi-annotator benchmark with an LLM judge, including Hindi and Marathi long documents; decide the licence and publish
-with an ``Open in Colab'' link; rate limiting before any use beyond one trusted group.
+fix on more legal codes; a larger multi-annotator benchmark with an LLM judge, including Hindi and Marathi long documents; rate limiting before any use
+beyond one trusted group.
 
 \end{document}
