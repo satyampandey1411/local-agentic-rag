@@ -388,6 +388,26 @@ kbd {
   .composer-hint kbd, .composer-hint .hint-keys { display: none; }
   .msg-user .bubble { max-width: 92%; }
   .sources { max-height: 34%; }
+
+  /* touch targets: at least 40 px, and 16 px text in inputs so iOS does not zoom the page on focus */
+  .btn, .btn-sm { min-height: 40px; padding-left: 12px; padding-right: 12px; }
+  .btn-icon, .btn-icon.btn-sm { width: 40px; padding: 0; }
+  .btn-send { width: 44px; height: 44px; min-height: 44px; }
+  .view-tab { min-height: 40px; padding: 5px 12px; }
+  .doc { grid-template-columns: 40px minmax(0, 1fr); padding-left: 4px; }
+  :root { --topbar-h: 60px; } /* room for the 40 px tabs */
+  .doc-check { align-items: flex-start; padding-top: 8px; min-height: 40px; }
+  .composer textarea::placeholder { font-size: 14px; }
+  .doc-check input { width: 22px; height: 22px; }
+  .doc-actions { gap: 4px; }
+  .composer textarea, #page-input, .auth-box input { font-size: 16px; }
+  .composer textarea { min-height: 44px; padding: 10px 6px; }
+  #page-input { min-height: 40px; }
+  .auth-box input { min-height: 44px; }
+  .auth-box .btn { min-height: 44px; }
+  .trace summary, .doc-warnings summary, .unsupported summary { padding: 11px 0; }
+  .chip { position: relative; }
+  .chip:not(.chip-static)::after { content: ""; position: absolute; inset: -9px -3px; } /* bigger hit area, same layout */
 }
 
 @media (prefers-reduced-motion: reduce) {

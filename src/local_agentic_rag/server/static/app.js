@@ -628,10 +628,34 @@
     }
   }
 
+  // Ask the server whether this file would be accepted BEFORE sending its body. A server that
+  // rejects a large upload early (too big, over quota, another upload running) cannot get its
+  // answer through reliably: browsers and proxies often report a dropped connection instead and
+  // the reason is lost. Returns the reason text, or null when the upload may go ahead (also when
+  // the check itself cannot be made: the upload will then report whatever goes wrong).
+  async function uploadBlocker(u) {
+    let res;
+    try { res = await fetch(`api/upload-check?size=${u.file.size}`, { headers: { Accept: 'application/json' } }); } catch { return null; }
+    if (res.ok) return null;
+    let data = null;
+    try { data = await res.json(); } catch { /* not JSON */ }
+    return data && typeof data.detail === 'string' ? data.detail : null;
+  }
+
   function startUpload(u) {
+    u.status = 'uploading';
+    u.loaded = 0;
+    uploadBlocker(u).then((reason) => {
+      if (state.uploads.get(u.id) !== u) return; // cancelled while checking
+      if (reason) { u.status = 'error'; u.error = reason; u.xhr = null; renderLibrary(); pumpUploads(); return; }
+      sendUpload(u);
+    });
+    renderLibrary();
+  }
+
+  function sendUpload(u) {
     const xhr = new XMLHttpRequest();
     u.xhr = xhr;
-    u.status = 'uploading';
     xhr.open('POST', 'api/documents');
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.upload.onprogress = (e) => {
@@ -645,18 +669,29 @@
       let data = null;
       try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
       if (xhr.status >= 200 && xhr.status < 300 && data && data.doc_id) {
-        const existed = state.docs.has(data.doc_id);
+        const existed = data.already_in_library === true || state.docs.has(data.doc_id);
         state.uploads.delete(u.id);
         upsertDoc(data);
-        toast(existed ? `“${data.title}” is already in your library.` : `“${data.title}” uploaded — processing has started.`);
+        if (data.status === 'failed') toast(`“${data.title}” could not be processed${data.error ? `: ${data.error}` : '.'}`, 'error', 8000);
+        else if (existed) toast(`“${data.title}” is already in your library${data.status === 'ready' ? '' : ' (still being processed)'}.`);
+        else toast(`“${data.title}” uploaded — processing has started.`);
         pumpUploads();
+      } else if (data && typeof data.detail === 'string') {
+        fail(data.detail);
+      } else if (xhr.status === 413) {
+        fail('The server, or a proxy in front of it, refused the file as too large.');
       } else {
-        fail(data && typeof data.detail === 'string' ? data.detail : `Upload failed (HTTP ${xhr.status}).`);
+        fail(`Upload failed (HTTP ${xhr.status}).`);
       }
     };
-    xhr.onerror = () => fail(u.loaded >= u.total && u.total > 0
-      ? 'The server closed the connection. The file may be too large.'
-      : 'Network error — check your connection and try again.');
+    // No response at all. If the server rejected the upload early, the reason was lost with the
+    // connection: ask again (it is cheap) and show the real reason when there is one.
+    xhr.onerror = () => uploadBlocker(u).then((reason) => {
+      if (state.uploads.get(u.id) !== u) return;
+      fail(reason || (u.loaded >= u.total && u.total > 0
+        ? 'The connection closed before the server answered, so it is unknown whether the file was accepted. Check the library, then try again.'
+        : 'The connection dropped during the upload. Check your connection and try again.'));
+    });
     xhr.onabort = () => { u.xhr = null; };
     const form = new FormData();
     form.append('file', u.file, u.file.name);
@@ -734,7 +769,7 @@
   // ---- live "thinking" indicator
   const STEP_DONE = {
     plan: 'Planned the search', retrieve: 'Searched', grade: 'Checked relevance', generate: 'Drafted answer',
-    verify: 'Verified', escalate: 'Searching again', refuse: 'No match', calc: 'Calculated',
+    verify: 'Checked the answer', escalate: 'Searching again', refuse: 'No match', calc: 'Calculated',
     calc_appended: 'Added calculation', infer_citations: 'Matched citations', keep_first_answer: 'Kept first answer',
     table_reference_added: 'Named the table',
   };
@@ -772,11 +807,9 @@
   // Live answer text while the model is still writing. It is shown as plain DOM text (never
   // raw HTML) with no citation chips: those need the whole text and come with the final answer.
   function buildStreaming(m) {
-    const status = m.streamDone
-      ? h('div', { className: 'thinking-now stream-check' },
-        h('span', { className: 'dots', attrs: { 'aria-hidden': 'true' } }, h('span'), h('span'), h('span')),
-        h('span', { text: 'checking the answer against the sources…' }))
-      : null;
+    const status = h('div', { className: 'thinking-now stream-check' },
+      h('span', { className: 'dots', attrs: { 'aria-hidden': 'true' } }, h('span'), h('span'), h('span')),
+      h('span', { text: m.streamDone ? 'Draft — checking it against the sources, it may change…' : 'Draft — still being written, not checked yet…' }));
     return h('div', { className: `card thinking streaming${m.streamDone ? ' is-checking' : ''}`, attrs: { 'aria-busy': 'true', 'aria-live': 'off' } },
       renderRichText(m.partial, () => null),
       status,
@@ -859,7 +892,8 @@
       return card;
     }
     if (a.refused) {
-      card.append(h('div', { className: 'refusal-head' }, icon('search'), 'Not found in your documents'),
+      const sawAll = !(a.partial && a.partial.pages_total);
+      card.append(h('div', { className: 'refusal-head' }, icon('search'), sawAll ? 'Not found in your documents' : `Not found in the first ${fmtInt(a.partial.pages_indexed)} pages`),
         renderRichText(a.answer || 'I could not find the answer to this question in the document.', citeFor),
         h('p', { className: 'refusal-tip', text: 'Try rephrasing the question, or select different documents on the left.' }));
     } else {
@@ -875,9 +909,11 @@
     const foot = h('div', { className: 'answer-foot' });
     if (!a.refused) {
       if (a.grounded === false) foot.append(h('span', { className: 'badge badge-warn', title: 'Some statements could not be checked against the document. Open the sources to verify.' }, icon('alert', 'icon icon-sm'), 'Unverified'));
-      else if (a.grounded === true) foot.append(h('span', { className: 'badge badge-ok', title: 'A second pass checked the answer against the cited passages.' }, icon('shield', 'icon icon-sm'), 'Verified'));
+      else if (a.grounded === true) foot.append(h('span', { className: 'badge badge-ok', title: 'A second pass checked the answer against the passages it was based on.' }, icon('shield', 'icon icon-sm'), 'Verified'));
+      else foot.append(h('span', { className: 'badge', title: 'The automatic check did not run or gave no result. Open the sources to verify.' }, 'Not checked'));
     }
-    if (cites.length) foot.append(h('span', { text: 'Sources' }), ...cites.map((c) => citationChip(m, c)));
+    const inferred = Array.isArray(a.trace) && a.trace.some((t) => t.step === 'infer_citations');
+    if (cites.length) foot.append(h('span', { text: inferred ? 'Sources (matched by wording)' : 'Sources', title: inferred ? 'The answer did not cite its sources itself; these passages were matched to it afterwards.' : '' }), ...cites.map((c) => citationChip(m, c)));
     foot.append(h('span', { className: 'spacer' }));
     if (a.latency_sec) foot.append(h('span', { text: fmtSecs(a.latency_sec), title: a.queue_wait_s > 0.5 ? `including ${fmtSecs(a.queue_wait_s)} waiting in line` : 'Time to answer' }));
     foot.append(copyButton(m));
@@ -941,7 +977,7 @@
 
   const ERROR_TITLES = {
     timeout: 'This is taking too long', busy: 'The server is busy', cancelled: 'Stopped',
-    network: 'Connection problem', conflict: 'A document is not ready', interrupted: 'Interrupted',
+    network: 'Connection problem', conflict: 'A document is not ready', missing: 'A document was removed', interrupted: 'Interrupted',
   };
   function buildError(m) {
     const e = m.error || {};
@@ -1042,7 +1078,7 @@
       if (!res.ok) {
         let detail = `Request failed (HTTP ${res.status}).`;
         try { const d = await res.json(); if (typeof d.detail === 'string') detail = d.detail; } catch { /* not JSON */ }
-        throw new ApiError(res.status, detail, res.status === 409 ? 'conflict' : res.status === 404 ? 'conflict' : 'failed');
+        throw new ApiError(res.status, detail, res.status === 409 ? 'conflict' : res.status === 404 ? 'missing' : 'failed');
       }
       for await (const ev of readSSE(res.body)) {
         const d = ev.data || {};
@@ -1060,7 +1096,7 @@
           rerender(false);
         }
         else if (ev.event === 'answer') { m.answer = trimAnswer(d); m.status = 'done'; m.partial = ''; m.streamDone = false; }
-        else if (ev.event === 'error') { m.status = 'error'; m.error = { code: d.code || 'failed', detail: d.detail || 'Answering failed.' }; }
+        else if (ev.event === 'error') { m.status = 'error'; m.error = { code: d.code && d.code !== 'failed' ? d.code : d.status === 404 ? 'missing' : d.status === 409 ? 'conflict' : 'failed', detail: d.detail || 'Answering failed.' }; }
       }
       if (m.status === 'pending') {
         m.status = 'error';
@@ -1168,7 +1204,7 @@
     const total = doc ? doc.num_pages : 0;
     $('viewer-title').textContent = doc ? doc.title : 'Source';
     $('viewer-sub').textContent = doc
-      ? `Page ${fmtInt(v.page)}${total ? ` of ${fmtInt(total)}` : ''}${v.page === v.citePage && v.chunkId ? ' · cited passage highlighted' : ''}`
+      ? `Page ${fmtInt(v.page)}${total ? ` of ${fmtInt(total)}` : ''}${v.page === v.citePage && v.chunkId ? (v.highlighted ? ' · cited passage highlighted' : ' · cited passage is on this page') : ''}`
       : '';
     const input = $('page-input');
     if (document.activeElement !== input) input.value = String(v.page);
@@ -1185,6 +1221,7 @@
   function loadPage() {
     const v = state.viewer;
     if (!v.docId) return;
+    v.highlighted = false; // set once the highlight boxes are known
     updateViewerChrome();
     const img = $('page-img');
     const width = Math.round(stageWidth() * zoomLevel());
@@ -1210,7 +1247,7 @@
       img.style.opacity = '1';
       img.hidden = false;
       $('page-loading').hidden = true;
-      boxes.then((b) => { if (token === pageToken) scrollToHighlight(b[0], probe, width); });
+      boxes.then((b) => { if (token === pageToken) { v.highlighted = b.length > 0; updateViewerChrome(); scrollToHighlight(b[0], probe, width); } });
     };
     probe.onerror = async () => {
       if (token !== pageToken) return;

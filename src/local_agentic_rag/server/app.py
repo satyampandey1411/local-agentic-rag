@@ -170,6 +170,11 @@ class SessionRequest(BaseModel):
     token: str = Field(..., max_length=1024)
 
 
+def _fmt_mb(n: int) -> str:
+    mb = n / (1024 * 1024)
+    return f"{mb:.0f} MB" if mb >= 10 or mb == int(mb) else f"{mb:.1f} MB"
+
+
 class UploadLimiter:
     """Per-client-IP upload limits: one upload at a time, optional daily byte quota.
 
@@ -190,8 +195,8 @@ class UploadLimiter:
         day, n = self._used.get(ip, ("", 0))
         return n if day == self._today() else 0
 
-    def begin(self, ip: str, declared_bytes: int | None) -> None:
-        """Raise 429 / 413 if this client may not start an upload now; else mark it in flight."""
+    def check(self, ip: str, declared_bytes: int | None) -> None:
+        """Raise 429 / 413 if this client may not start an upload now.  Changes nothing."""
         if ip in self.in_flight:
             raise HTTPException(
                 429,
@@ -201,15 +206,25 @@ class UploadLimiter:
         if self.quota_bytes is not None:
             used = self.used(ip)
             if used >= self.quota_bytes or used + (declared_bytes or 0) > self.quota_bytes:
-                raise HTTPException(413, self.quota_message())
+                raise HTTPException(413, self.quota_message(ip, declared_bytes))
+
+    def begin(self, ip: str, declared_bytes: int | None) -> None:
+        """Raise 429 / 413 if this client may not start an upload now; else mark it in flight."""
+        self.check(ip, declared_bytes)
         self.in_flight.add(ip)
 
-    def quota_message(self) -> str:
-        return (
-            "Daily upload quota exceeded "
-            f"({(self.quota_bytes or 0) // (1024 * 1024)} MB per address per day). "
-            "Try again tomorrow (UTC)."
-        )
+    def quota_message(self, ip: str | None = None, declared_bytes: int | None = None) -> str:
+        quota = self.quota_bytes or 0
+        text = f"Daily upload quota exceeded ({_fmt_mb(quota)} per address per day)."
+        if ip is not None:
+            left = max(0, quota - self.used(ip))
+            if declared_bytes:
+                text += (
+                    f" This file is {_fmt_mb(declared_bytes)} and {_fmt_mb(left)} is left today."
+                )
+            else:
+                text += f" {_fmt_mb(left)} is left today."
+        return text + " Try again tomorrow (UTC)."
 
     def remaining(self, ip: str) -> int | None:
         """Bytes this client may still upload today (None = no quota)."""
@@ -324,6 +339,27 @@ def create_app(
 
     # ------------------------------------------------------------------ documents
 
+    @app.get("/api/upload-check")
+    def upload_check(request: Request, size: int | None = Query(None, ge=0)) -> JSONBody:
+        """Would an upload of ``size`` bytes be accepted right now?  Reads no body.
+
+        Answers with the same status and message the upload itself would give (413 too
+        large / over quota, 429 another upload running, 401 via the token gate), so a
+        browser can learn the real reason BEFORE sending a large body.  An upload that is
+        rejected after its body started is often reported by the browser as a dropped
+        connection, with the reason lost; this endpoint is how the UI avoids that.
+        It reserves nothing: the real upload re-checks.
+        """
+        ip = request.client.host if request.client else "unknown"
+        if size is not None and size > max_bytes:
+            raise HTTPException(
+                413, f"This file is larger than the {max_upload_mb} MB upload limit."
+            )
+        limiter.check(ip, size)
+        return JSONBody(
+            {"ok": True, "max_bytes": max_bytes, "quota_left_bytes": limiter.remaining(ip)}
+        )
+
     @app.post("/api/documents", status_code=201)
     async def upload_document(request: Request) -> JSONBody:
         ip = request.client.host if request.client else "unknown"
@@ -340,7 +376,8 @@ def create_app(
             try:
                 submitted_at = time.time()
                 record = await run_in_threadpool(library.submit, received.path, received.filename)
-                if record.created_at >= submitted_at:  # a duplicate returns the older record
+                duplicate = record.created_at < submitted_at  # a duplicate returns the older record
+                if not duplicate:
                     stored = received.size
             except ValueError as exc:
                 raise HTTPException(400, str(exc) or "The PDF could not be added.") from None
@@ -349,7 +386,8 @@ def create_app(
                 raise
         finally:
             limiter.finish(ip, stored)
-        return JSONBody(record.to_dict(), status_code=201)
+        # ``already_in_library`` is extra: the same file again returns the existing record.
+        return JSONBody({**record.to_dict(), "already_in_library": duplicate}, status_code=201)
 
     @app.get("/api/documents")
     def list_documents() -> JSONBody:
