@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline measurement of the F11 presupposition gate (no LLM, no models).
+"""Offline measurement of the presupposition gate (no LLM, no models).
 
 For every question of a development set, extract the presupposed entities from the question
 and test whether any of them is absent from the FULL text of its document.  The full
@@ -7,7 +7,7 @@ document is a proxy for the retrieved passages: an entity missing from the whole
 is certainly missing from the passages, but the real gate also fires on entities that are in
 the document and merely not retrieved, so these counts are a lower bound on real fires.
 
-    python benchmark/f11_offline.py [--scale-dir DIR ...] [--out docs/f11_offline.md]
+    python benchmark/presupposition_offline.py [--scale-dir DIR ...] [--out local/presupposition_offline.md]
 
 Development data only: benchmark/questions.jsonl, benchmark/multilingual/ and the synthetic
 corpora from benchmark/scale/make_corpus.py.
@@ -69,7 +69,7 @@ def measure(name: str, questions: list[dict], texts: dict[str, str]) -> list[dic
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scale-dir", action="append", default=[], type=Path)
-    ap.add_argument("--out", type=Path, default=ROOT / "docs" / "f11_offline.md")
+    ap.add_argument("--out", type=Path, default=ROOT / "local" / "presupposition_offline.md")
     ap.add_argument("--json", type=Path, default=None, help="also dump per-question rows")
     args = ap.parse_args()
 
@@ -143,7 +143,7 @@ def main() -> None:
             )
     out = {"table": lines, "kinds": dict(kinds), "kinds_u": dict(kinds_u), "notes": notes}
     (ROOT / "local").mkdir(exist_ok=True)
-    (ROOT / "local" / "f11_summary.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
+    (ROOT / "local" / "presupposition_summary.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
 
 
 if __name__ == "__main__":

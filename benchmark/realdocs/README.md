@@ -46,8 +46,8 @@ That is 46 questions, 9 of them (about 20%) unanswerable. Types:
 
 ## How the set was built
 
-1. The PDFs were **not** downloaded on the authoring machine. Text was read
-   with a web-fetch tool from official HTML editions of the same content:
+1. Questions and gold quotes were written from the official HTML editions of
+   the same content:
    - Title 26: govinfo's `USCODE-2023-title26` HTML, reached through
      `https://www.govinfo.gov/link/uscode/26/<section>?year=2023&link-type=html`.
      The current text on uscode.house.gov was deliberately **not** used,
@@ -98,9 +98,8 @@ section introductions.
 - **Budget Appendix: no questions.** govinfo and whitehouse.gov publish the
   FY2026 Appendix only as PDF, whole or per agency. govinfo's help page says
   budget documents are available as PDF and spreadsheets, and no HTML or text
-  edition was found. Since the authoring rule banned downloading PDFs, its
-  text could not be read verbatim. Web-search snippets were tried and were not
-  reliable enough for verbatim evidence. The document stays in
+  edition was found. Questions were written only from HTML text, so no
+  verbatim evidence could be taken for it. The document stays in
   `documents.json` so it can be ingested as a large distractor. To add its 15
   questions, write them from text extracted from the PDF itself, for example
   on the GPU machine, or from the per-agency PDFs.
