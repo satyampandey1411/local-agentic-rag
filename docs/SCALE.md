@@ -4,7 +4,10 @@ How the system behaves as a single PDF grows from 100 to 10,000 pages, on the ta
 hardware (one Tesla T4, 15 GB VRAM). Every number in this file was measured in the run named
 next to it. Tiers or documents that were not run are marked as such; nothing is extrapolated.
 
-<!-- RESULTS -->
+Run names: "run v1" to "run v4" are the scale runs of 26 Oct (synthetic tiers, real documents, load
+test); "run 1" to "run 8" are the later runs of 26–29 Oct, listed in
+[RESULTS.md](RESULTS.md#where-the-numbers-come-from). All ran on Kaggle Tesla T4 GPUs.
+
 
 ## Summary
 
@@ -24,10 +27,11 @@ next to it. Tiers or documents that were not run are marked as such; nothing is 
 * **The existing benchmarks did not regress** with the new architecture: English 76.9% (the same
   12 questions fail as before), multilingual 94.4%.
 * **Final run (27 Oct, T4 ×2): the 46 real-document questions, used a final time, gave 30/37 answerable
-  correct (26/37 before the sprint fixes) and 6/9 unanswerable refused (unchanged).** On a new legal
+  correct (26/37 before the 26–27 Oct fixes) and 6/9 unanswerable refused (unchanged).** This was the
+  second run on this set, with three fixes informed by its first-run failures, so it is not held out. On a new legal
   code the system had not been tuned on (US Code Title 21, held-out set 2, single use): 19/25
   answerable, 4/5 refused, page recall@5 0.917. A Hindi audit report (answers only): 9/14. The GAO
-  Cost Guide was not run (download refused, HTTP 403).
+  Cost Guide (476 pages, run once on 29 Oct in run 7): 15/18 answerable, 2/4 refused, page recall@5 1.000.
 * **Six tiers on the final code (run 4, 27 Oct, table detection on the GPU):** every tier passed again,
   with the same retrieval and answer quality as run v1, and recovery passed at every tier. A
   10,000-page PDF now ingests in 36.9 min (4.5 pages/s), about half the time with CPU table detection;
@@ -36,16 +40,15 @@ next to it. Tiers or documents that were not run are marked as such; nothing is 
   Throughput saturates at about 10.5 answers per minute with two answers running at a time on
   one T4; beyond that, users queue.
 
-## Final run (Kaggle T4, 27 Oct)
+## Real documents and held-out set 2 (final run, Kaggle T4, 27 Oct)
 
-Kaggle notebook `notebookcd9bf75c36`, Tesla T4 x2, 27 Oct 2026 (about 00:35-02:30 IST). Code snapshot
-`run3` (base 2623aa1 plus diff 433e8647): the same behaviour as the pushed commits, except for 9 later
-review fixes that change no chunk text. Table detection ran on the GPU (`LOCAL_RAG_ONNX_GPU=1`); an
+Run 3, Kaggle notebook, Tesla T4 x2, 27 Oct 2026. The code had the same behaviour as the pushed commits, except
+for 9 later review fixes that change no chunk text. Table detection ran on the GPU (`LOCAL_RAG_ONNX_GPU=1`); an
 identity check in the same run found the parsed pages byte-identical to the CPU path on all 8 test
 PDFs. One document was processed at a time on GPU 0. All numbers below are generated from the run's
-own JSON files (`local/kaggle/sprint/run3/SUMMARY.md`).
+own JSON result files.
 
-### Real documents (`benchmark/realdocs`; final, single use of the 46 questions)
+### Real documents (`benchmark/realdocs`; second and final use of the 46 questions)
 
 "Before" is the earlier measured run (26 Oct). Questions whose evidence quote was not located in the
 PDF are left out of the page metrics (recall@5, MRR, citation precision): 911-q01 (9/11 Report);
@@ -57,7 +60,7 @@ statab-q01, statab-q05, statab-q11 (Statistical Abstract).
 | Statistical Abstract 2012 | 940 | 9/13 → **11/13** | 3/3 → 3/3 | 1.000 / 1.000 | 0.950 | 7.3 s | 942 s = 15.7 min; parse 521 s = 8.7 min (20,965) |
 | US Code Title 26 | 4,211 | 7/12 (run 2) → **7/12** | 2/3 → 2/3 | 0.917 / 0.727 | 0.736 | 21.1 s | 700 s = 11.7 min (34,368) |
 | Budget Appendix 2026 | 1,224 | no questions (ingest only) | - | - | - | - | 1,439 s = 24.0 min (16,523) |
-| **Overall** | | **30/37** (26/37 before the sprint fixes) | **6/9** (6/9 before) | | | | |
+| **Overall** | | **30/37** (26/37 before the 26–27 Oct fixes) | **6/9** (6/9 before) | | | | |
 
 Wrong answers: 9/11 Report 911-q05 and 911-q15 (both unanswerable questions that were answered);
 Statistical Abstract statab-q03 (section reference) and statab-q10 (lookup); US Code Title 26
@@ -68,12 +71,12 @@ uscode26-q06 (unanswerable, answered), q08 (section reference), q09 and q12 (num
 ingest (17.5 min to parse) with table detection on the CPU, while two documents were processed at
 once on the same 4 vCPUs. In this run the GPU did the table detection and one document ran at a time:
 942 s ingest (15.7 min), parse 521 s (8.7 min). The speed-up cannot be attributed to the GPU alone,
-because the contention changed too. (The separate controlled test in Sprint run 2 measured the GPU
+because the contention changed too. (The separate controlled test in run 2 measured the GPU
 effect alone: 224.7 s → 119.0 s on a 1,000-page PDF, identical output.)
 
 **"Which table" questions, Statistical Abstract: 5/6 correct** (statab-q02, q06, q07, q08, q11 correct;
 statab-q10, retail sales of electricity by state, wrong). The questions are the "lookup" type; the
-sprint's table-naming change (F6) was active in this run.
+deterministic table naming added on 26 Oct was active in this run.
 
 ### Held-out set 2 (`benchmark/heldout2`; single use)
 
@@ -83,7 +86,7 @@ Questions were written without the system by an author who read only the officia
 |---|---:|---:|---:|---:|---:|---:|---:|
 | US Code Title 21 | 1,034 | **19/25** | 4/5 | 0.917 / 0.769 (24 questions located) | 0.741 | 12.1 s | 145 s (7,687) |
 | CAG Hindi GST audit report (answers only, no page metrics) | 190 | **9/14** | 2/4, reported separately (below) | - | - | 13.6 s | 23 s (585) |
-| GAO Cost Guide | - | **not run** | - | - | - | - | - |
+| GAO Cost Guide (run 7, 29 Oct) | 476 | **15/18** | 2/4 | 1.000 / 0.972 | 0.792 | 5.4 s | 145 s |
 
 * **US Code Title 21**: the 9 questions that name a section (for example "21 U.S.C. 333(a)(1)") were 8/9 correct. Wrong:
   t21-q05 (section reference), q11, q12, q17 (lookup), q24, q25 (multi-hop), q29 (unanswerable,
@@ -94,8 +97,11 @@ Questions were written without the system by an author who read only the officia
   and cag-q16, both Hindi, were answered). These four were checked against the executive summary
   only, so the two answered ones may in fact be answerable from the full report; read this as a
   lower bound on refusal, not as two proven errors.
-* **GAO Cost Guide: not run.** gao.gov answered HTTP 403 to the download from Kaggle, so its 22
-  questions remain unused.
+* **GAO Cost Guide: run once, in run 7** (29 Oct, Kaggle T4, the current default with the number fixes;
+  Title 21 and CAG ran on the earlier default). gao.gov answered HTTP 403 to the download from Kaggle, so
+  the PDF was downloaded once in a browser and attached unchanged as a dataset. Numbers read from the run
+  log ([RESULTS.md section 9](RESULTS.md#9-real-documents-held-out-documents-and-the-no-document-control)). Held-out set 2 is now complete: Title 21,
+  CAG and GAO were each used once.
 
 ### Regression on the same run
 
@@ -104,14 +110,13 @@ multilingual 94.4% (17/18; the one failure is ml-mr-shaniwarwada-q05). Unanswera
 
 ### Six synthetic tiers (run 4, final code)
 
-In this session the scale job failed at start: two jobs downloaded the model into the same Ollama
+In the run 3 session the scale job failed at start: two jobs downloaded the model into the same Ollama
 directory at the same moment (`ollama pull ... failed: remove /root/.ollama/...`). The download now
 waits and retries once (`OllamaLLM.ensure_ready`), and the tiers were re-run as the only job on the
-machine: Kaggle notebook `notebookf8de2130c7`, Tesla T4 ×2 (tiers on GPU 1), 27 Oct 2026 (about
-02:50–05:55 IST), code snapshot `run4` (base e7abee2 plus diff fce5cf45: the download retry over the
-run 3 code). Table detection on the GPU (`LOCAL_RAG_ONNX_GPU=1`), 2 parse workers, 4 vCPUs. The job
+machine: run 4, Kaggle notebook, Tesla T4 ×2 (tiers on GPU 1), 27 Oct 2026, run 3 code plus the download
+retry. Table detection on the GPU (`LOCAL_RAG_ONNX_GPU=1`), 2 parse workers, 4 vCPUs. The job
 finished with exit code 0 after 10,916 s. Numbers are copied from the summary the job printed to the
-run log (`local/kaggle/sprint/run4/results/scale_summary_from_log.md`).
+run log.
 
 | Pages | Ingest | Parse / index / BM25 (s) | Pages/s | Chunks | Peak RAM | Peak CUDA | Index on disk | Cold load | Recall@5 | MRR | Retrieval p50 | Answer acc. | Refusal | Citation precision | Answer p50 |
 |---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -149,7 +154,7 @@ The interrupted-and-resumed 10,000-page job took 2,209 s in total against 2,214 
 ingest: nothing done before the interruption was repeated. One page was lost to the crash at each tier,
 as designed.
 
-## Sprint run 2: legal sections, table detection on the GPU, presupposition check (Kaggle T4, 26–27 Oct)
+## Legal sections, table detection on the GPU, presupposition check (run 2, Kaggle T4, 26–27 Oct)
 
 **Section numbers on chunks (US Code Title 26).** The diagnosis (all 4,211 pages through the real parser)
 showed why "section 164" questions failed: in this PDF a bold section heading ("§ 164. Taxes") is
@@ -184,13 +189,13 @@ answers per minute against 10 to 14 with one slot), but another job's copy of th
 loaded on the same GPU, so the two servers competed for memory. The comparison is not fair and the
 default (one slot, two answers at a time in the server) is kept.
 
-**Presupposition check (F11, off by default).** With the check on, the English set scored the same
+**Presupposition check (off by default).** With the check on, the English set scored the same
 76.9% with the same 12 failures, but one more answerable question was refused (false refusals 1.9% →
 3.8%); the multilingual set was unchanged. It brought no measured benefit, so it stays off.
 
-## Sprint run 1: streaming, ask-while-processing, regression (Kaggle T4, 26 Oct, late evening)
+## Streaming, asking while processing, and regression (run 1, Kaggle T4, 26 Oct)
 
-Code: the 26 Oct sprint changes (token streaming, ask while processing, "which table" naming, access
+Code: the 26 Oct changes (token streaming, ask while processing, "which table" naming, access
 token, number-word grader; layout model on GPU available but off). One T4 ran the regression
 benchmark while the other ran the tiers below, sharing 4 vCPUs.
 
@@ -222,7 +227,7 @@ With one or two users the first words appear in under a second (median). Beyond 
 questions wait in the queue, so the first words arrive later; throughput stays at 10 to 14 answers
 per minute on one T4. The `scripts/smoke_install.sh` check passed against this server.
 
-**Layout model on the GPU (opt-in): inconclusive in run 1; measured in Sprint run 2 above (1.89×).** The installed GPU build of ONNX Runtime needed
+**Layout model on the GPU (opt-in): inconclusive in run 1; measured in run 2 above (1.89×).** The installed GPU build of ONNX Runtime needed
 CUDA 13 libraries that the image did not have, so both settings ran on the CPU (212 s and 211 s for
 1,000 pages, identical output). This is recorded as inconclusive.
 
@@ -286,7 +291,7 @@ failing. The samples are small (3 questions per user).
 
 ## Existing benchmarks on the new architecture (run v1)
 
-| Benchmark | Before the sprint changes | After (streaming ingestion etc.) |
+| Benchmark | Before the scale changes | After (streaming ingestion etc.) |
 |---|---:|---:|
 | English answer accuracy (agent) | 76.9% | 76.9%, same 12 failures |
 | English page recall@5 / citation precision | 0.962 / 0.784 | 0.962 / 0.784 |
@@ -327,16 +332,17 @@ questions refused.
   fixed version (v4) only accepts "§"/"Section"/dotted numbers and section starts written
   "§ 164. Taxes" inside the text. v4 is neutral (6/12, recall@5 0.75, same as before): in this
   PDF it only identifies §7701, so §164, §4081 and §7203 are still not found. The cause (how
-  these headings come out of the PDF) was diagnosed and fixed in the sprint (see Sprint run 2
-  above).
+  these headings come out of the PDF) was diagnosed and fixed later (see run 2 above).
 * **Statistical Abstract: "which table…" questions.** Retrieval was perfect (recall@5 1.00), but
   in 4 of 13 answers the model described the right table without its table number. A prompt
-  change could target this, but it would be fitted to this held-out set, so it was not made.
+  change could target this, but it would be fitted to this question set, so it was not made. The
+  deterministic table naming added later targeted the same failures, so the final run is
+  not a held-out test of it.
 * **Questions that presuppose something absent.** "What powers does the Intelligence Reform
   Act of 2004 give the DNI?" (the report predates the Act) was answered from the report's
   recommendation of a National Intelligence Director; "the temperature in degrees" was
   answered with "temperate". A check for named entities missing from the passages now
-  exists as an option that is off by default (Sprint run 2): it brought no gain and raised false
+  exists as an option that is off by default (run 2): it brought no gain and raised false
   refusals from 1.9% to 3.8%, in line with how an earlier strict-refusal rule raised false
   refusals from 3.8% to 21.2%.
 * **One unanswerable question is arguably answerable.** "Can I deduct the interest on my car

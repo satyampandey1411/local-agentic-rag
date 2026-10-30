@@ -1,4 +1,4 @@
-# Progress report (4 pages)
+# Progress report
 
 - `Local_Agentic_RAG_Progress_Report.pdf` is the report (`main.pdf` is the latest build).
 - `main.tex` is the editable source: pdfLaTeX, TikZ/pgfplots for the diagram and charts.
@@ -9,5 +9,5 @@
 Every number in the report comes from a measured run; `docs/RESULTS.md` lists the sources.
 
 ## Compile
-- Overleaf: upload `Local_Agentic_RAG_Progress_Report_overleaf.zip` (New Project → Upload Project), compiler pdfLaTeX.
+- Overleaf: upload `main.tex` and the `figures/` folder (New Project → Upload Project), compiler pdfLaTeX.
 - This machine: `./build.sh` (pdfLaTeX in the `texlive/texlive` Docker image, 2 passes).

@@ -1,6 +1,6 @@
 # Architecture
 
-A local, open-source chatbot that answers questions about any uploaded PDF with
+A local chatbot that answers questions about any uploaded PDF with
 page-level citations, using only open-weight models that fit on a free Google
 Colab T4 GPU (15 GB VRAM).
 
@@ -48,7 +48,8 @@ Colab T4 GPU (15 GB VRAM).
  answer + citations (marker → chunk → page) + grounded flag + trace
 ```
 
-Cost: 2 LLM calls for most questions, at most 6. `agent_mode="full"` keeps the
+Cost, measured in the 27 Oct regression run (run 3, English set, 61 questions): the median question
+used 2 LLM calls and the most was 9 (a numerical question). `agent_mode="full"` keeps the
 original always-on loop (plan → retrieve⇄grade → generate⇄verify) for comparison.
 
 **Why adaptive, which we measured.** The always-on loop (v1) was *worse* than a single pass on
@@ -155,14 +156,15 @@ lost everything. Ingestion is now a two-pass stream with checkpoints
 | Reading order | column classification + bands | Naive y-then-x sorting interleaves the two columns of an academic paper line by line. |
 | Tables | `find_tables` → Markdown with its caption as the first line; whitespace tables rebuilt from word coordinates | On BEA-style statistical tables `find_tables` stacks whole columns into one cell (`2.5<br>2.9<br>…`). Row serialisation with header labels lets a 7B model read the right cell. Captions let it tell look-alike tables apart (arXiv Table 2 vs Table A.3). |
 | Chunking | ≤320 *embedder* tokens, heading-aware, page-bound | The starting code's 2048-char chunks were silently truncated to 256 tokens by MiniLM. That is roughly half of every chunk invisible to retrieval. |
-| Embedder | BAAI/bge-base-en-v1.5 (+ query instruction) | MiniLM is weak on long, technical passages. |
-| Keyword search | BM25, decimal/code-aware tokenizer | Dense vectors blur exact numbers, acronyms and table labels. |
+| Embedder | BAAI/bge-m3 (default; earlier BAAI/bge-base-en-v1.5 with a query instruction, still the `hybrid_rerank` preset) | MiniLM is weak on long, technical passages. BGE-M3 keeps English quality and adds 100+ languages in one vector space (see 2b). |
+| Keyword search | BM25, decimal/code-aware, Unicode-aware tokenizer | Dense vectors blur exact numbers, acronyms and table labels. |
 | Fusion | Reciprocal Rank Fusion | The reference's min-max + 0.7/0.3 weighting always rescales the best hit to 1.0, even when nothing matches. RRF uses ranks only and needs no tuning. |
-| Reranker | BAAI/bge-reranker-base cross-encoder | Bi-encoder similarity is coarse. The cross-encoder reads question and passage together. |
+| Reranker | BAAI/bge-reranker-v2-m3 cross-encoder (default; earlier BAAI/bge-reranker-base) | Bi-encoder similarity is coarse. The cross-encoder reads question and passage together. The multilingual v2-m3 keeps English quality and ranks Hindi and Marathi passages better. |
 | Agent | bounded Python state machine | Reference grades passages one LLM call at a time (6 calls/round). We grade in one batched call and add planning, verification and chat memory. No LangGraph dependency for 5 nodes. |
 | Citations | numbered passages → `[n]` → chunk → page; invalid markers dropped; overlap fallback | Reference never gives page numbers to the LLM, so it cannot cite. |
 | Refusal | `ANSWER_NOT_FOUND` sentinel + uncited "document does not say" detection | Unanswerable questions must not get confident fabricated answers. |
 | Calculator tool | LLM picks a **structured operation** (difference, change, sum, product, ratio, percent_change, count, months_between) and copies the operands with citations → each operand is checked against the cited passage (row and column) → Python computes it. Ungrounded extractions are retried once with the reasons, then dropped; stated changes skip the calculator; ID ranges are counted deterministically. If the answer omits a checked result, a cited "(Calculated: … = x)" sentence is appended | Every configuration scored 0% on numerical questions: evidence retrieved, arithmetic and counting wrong (222.8 vs 443.6; 8 vs 9 items). Free-form expressions often failed to parse, and the generator sometimes ignored the result. |
+| Numerical fixes | on by default (`config.py`): `calc_cell_alignment` (an operand copied from the wrong table cell is replaced by the cell its label names), `measure_aware_retrieval` (tables of the wrong measure move down the ranking), `calc_date_candidates` (time-span questions see the dates in the passages); `calc_measure_check` stays off | The six numerical questions failed on the wrong measure or the wrong cell, never on arithmetic. Numerical 2/6 → 5/6 on the English development set (RESULTS.md section 6). |
 | LLM serving | Ollama (prebuilt CUDA, JSON-schema output) | llama-cpp-python CUDA wheels for current Colab are unreliable, and source builds take 15+ min. Ollama installs in about a minute. |
 
 ## 2b. Multilingual design
@@ -190,7 +192,7 @@ languages is bounded by Qwen2.5-7B; OCR quality depends on scan quality and the 
 | bge-reranker-v2-m3 (fp16) | ~1.1 GB |
 | **Total** | **~7 GB**, leaving room for longer contexts or a 14B model at Q4 |
 
-Measured peak: 6.9 GB VRAM. Long documents do not change this: the embedder and reranker used 2.4 GB of CUDA memory at every size from 100 to 10,000 pages, and a 10,000-page index is 188 MB on disk (SCALE.md). Host RAM, not VRAM, is the binding limit. Ollama's
+Measured peak on Colab (25 Oct): 6.9 GB VRAM; with all three models loaded in the final notebook run, 9,069 of 15,360 MiB in use. Long documents do not change this: the embedder and reranker used 2.4 GB of CUDA memory at every size from 100 to 10,000 pages, and a 10,000-page index is 188 MB on disk (SCALE.md). Host RAM, not VRAM, is the binding limit. Ollama's
 model runner was measured leaking about 100 MB of anonymous memory per request,
 and under memory pressure it also disables mmap and copies the 4.7 GB model into RAM.
 The kernel OOM-killer then took down the notebook. Mitigations, all in the code:
