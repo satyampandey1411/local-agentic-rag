@@ -1,189 +1,239 @@
-# Local Agentic RAG for PDFs
+# Local Agentic RAG
 
-Ask questions about any PDF and get answers **with page citations**, using only
-open-weight models running locally. The whole system fits on a **free Google
-Colab T4**.
+**Ask questions about any PDF, even a 10,000-page one, and get answers with page citations you can click.**
+Every model runs locally on a single T4 GPU (free Google Colab or Kaggle). No outside AI service, no API key.
+
+| | |
+|---|---|
+| **84.6%** of answerable English questions correct (44/52) | **9/9** questions with no answer in the document refused |
+| **15/18 · 19/25 · 9/14** on three held-out documents never used for tuning | **1/52** with the same model and no documents: answers come from retrieval |
+| **17/18** multilingual questions (Hindi, Marathi, Hinglish, cross-language) | **10,000 pages** processed in 37 min on a T4, with crash recovery |
+| **0.5 s** median to the first words of an answer | **8.9 of 15 GB** GPU memory with every model loaded |
+
+All numbers are measured on Tesla T4 GPUs between 25 and 29 Oct 2026; how and where is in
+[docs/RESULTS.md](docs/RESULTS.md) and [docs/SCALE.md](docs/SCALE.md).
+
+![How Local Agentic RAG answers a question about a long PDF](docs/img/workflow.png)
+
+## What it does
+
+- **Answers with sources.** The language model sees only numbered passages from your PDF and must cite them.
+  Every citation chip (`[1] p.208`) opens the page with the passage highlighted. If the document does not
+  say, the answer says so.
+- **Checks itself.** A verifier tests every claim against the passages it cites. Only when an answer fails
+  that check, or refuses, does the agent plan sub-questions, search again, grade the evidence and rewrite.
+  An always-on loop was measured to be worse, so the extra work runs only when needed.
+- **Reads real documents.** Two-column papers in reading order, ruled tables, whitespace-aligned statistical
+  tables rebuilt cell by cell, running headers removed, scanned pages read with OCR.
+- **Works across languages.** Ask in English, Hindi, Marathi or Hinglish about a document in another
+  language. Search is cross-lingual, the question is translated when the scripts differ, and the answer
+  comes back in the question's language.
+- **Handles long PDFs.** Ingestion streams page batches through crash-isolated workers and saves a checkpoint
+  after every batch. A 10,000-page PDF can be asked about after its first batch, and an interrupted job
+  resumes where it stopped.
+- **Serves several people.** A web app with a background processing queue, live progress, streaming
+  answers, a fair queue for questions (two answers at a time on one GPU) and an optional access token.
+- **Does arithmetic in Python.** For numeric questions the model picks the operation and copies the
+  numbers with their citations; each number is checked against its cited table cell, then Python computes.
+
+## How it works
 
 ```
-PDF ─► PyMuPDF (reading order, tables, header/footer strip, OCR eng+hin+mar)
-    ─► heading-aware 320-token chunks
-    ─► hybrid retrieval: BGE-M3 (multilingual) + Unicode BM25 ─► RRF ─► bge-reranker-v2-m3
-    ─► agent: GENERATE ─► VERIFY ─► (refused/unsupported? PLAN ─► RE-RETRIEVE ─► GRADE ─► REGENERATE ─► VERIFY)
-    ─► answer with [n] citations → pages, or an explicit "not in the document"
+ Once per PDF                                         Every question
+ ─────────────                                        ──────────────
+ PDF ─► read pages (PyMuPDF workers, OCR eng+hin+mar)  question ─► search two ways: BGE-M3 meaning (top 30)
+     ─► passages ≤320 tokens, never across a page                  + BM25 keywords (top 30) ─► RRF ─► 24
+     ─► BGE-M3 vectors + BM25 keyword index                     ─► bge-reranker-v2-m3 ─► best 6
+     ─► on disk, checkpoint after every batch                   ─► Qwen2.5-7B writes, citing [n] ─► verify
+                                                                ─► fails? plan ─► search again ─► grade ─► rewrite
+                                                                ─► answer with page citations
 ```
 
-* **Grounded:** the model only sees numbered passages and must cite them. Invalid
-  citations are dropped, and a verifier step checks every claim against the passages.
-* **Agentic where it pays off (measured):** every answer is verified against its
-  passages. Only when the first answer is refused or unsupported does the agent
-  escalate: it decomposes the question, re-retrieves, grades the evidence and
-  regenerates with feedback. Follow-up questions are rewritten using chat history.
-  An always-on loop was measured to be *worse* than this; see docs/RESULTS.md.
-* **Multilingual:** documents and questions can be in different languages (English,
-  Hindi, Hinglish, Marathi, and the other languages BGE-M3 covers). Retrieval is
-  cross-lingual (BGE-M3 + bge-reranker-v2-m3, Unicode-aware BM25), a translated query is
-  added when the question and document scripts differ, answers come back in the
-  question's language, and scanned pages are OCR'd (Tesseract eng+hin+mar). Measured on a
-  separate 20-question Hindi/Marathi/Hinglish/OCR set; limits in docs/STATUS.md.
-* **Robust ingestion:** two-column papers, ruled tables and whitespace-aligned
-  statistical tables (rebuilt cell-by-cell), running headers, scanned pages (OCR).
-* **Measured:** a 61-question hand-verified benchmark over 3 public PDFs, with
-  retrieval and end-to-end ablations against the original baseline; a scale benchmark from
-  100 to 10,000 pages; and an independent question set on three long real PDFs with questions (a fourth for ingestion only).
-* **Built for long documents:** streaming, checkpointed ingestion with crash-isolated parse
-  workers, an on-disk index, and a web app with a background processing queue.
+| Part | Model (all local, open weights) | Where it runs |
+|---|---|---|
+| Answer writing, checking, planning, translation | Qwen2.5-7B-Instruct, 4-bit (Q4_K_M), served by Ollama | GPU |
+| Meaning search | BAAI/bge-m3 (100+ languages) | GPU |
+| Reranking | BAAI/bge-reranker-v2-m3 | GPU |
+| Keyword search | BM25 with a Unicode-aware tokenizer | CPU |
+| Scanned pages | Tesseract OCR (English, Hindi, Marathi) | CPU |
+| Table detection | PyMuPDF's layout model (optionally on the GPU) | CPU or GPU |
 
-![Chat UI running on a free Colab T4](docs/img/chat_ui_colab_t4.png)
+The design, and the measurement behind each choice, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-![Hindi and Hinglish questions about an English paper, answered in the question's language](docs/img/multilingual_answers_colab_t4.png)
+## Results
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and rationale,
-[docs/RESULTS.md](docs/RESULTS.md) for benchmark numbers, and
-[docs/STATUS.md](docs/STATUS.md) for what is done and what is outstanding.
+**Tuning set** (61 English questions over 3 public PDFs; a validator checks every required fact on its
+cited page) and **multilingual set** (20 questions):
 
-## Install
+| | English | Multilingual |
+|---|---|---|
+| Right page in the top 5 (original code → this system) | 73.1% → **94.2%** (top 1: 43.3% → 68.3%) | 0.944 → **1.000** (English-only → multilingual models) |
+| Answers correct, adaptive agent | **84.6%** (44/52, 95% CI 73.1–94.2); single pass 71.2%; simple baseline (MiniLM search, no reranker, no agent) 50.0% | **16–17 / 18** across runs |
+| Unanswerable questions refused | 9 / 9 | 2 / 2 |
 
-`docker compose up --build` starts the web app, Ollama and the model on a GPU machine (app on
-`http://127.0.0.1:8000`); `scripts/smoke_install.sh` checks an install end to end. Without an NVIDIA GPU, add `-f docker-compose.cpu.yml` (slow). The image was built and passed the smoke test with the real 7B model on a CPU host (27 Oct); the GPU path inside Docker is not yet tested (see docs/DEPLOY.md).
-[docs/DEPLOY.md](docs/DEPLOY.md) has requirements, the pip + Ollama path, options and the
-security notes (single-user, localhost only by default).
+**Documents never used for tuning** (each question set used once):
 
-## Quick start (Colab)
+| Document | Pages | Answerable correct | Unanswerable refused |
+|---|---:|---:|---:|
+| GAO Cost Estimating and Assessment Guide | 476 | 15 / 18 | 2 / 4 |
+| US Code Title 21 (Food and Drugs) | – | 19 / 25 | 4 / 5 |
+| CAG audit report on GST, in Hindi | 190 | 9 / 14 | 2 / 4 |
 
-Open `notebooks/Local_Agentic_RAG.ipynb` in Colab, select **Runtime → Change
-runtime type → T4 GPU**, and run the cells in order. The notebook:
+**Is it answering from memory?** No. With the same 61 questions and no document passages, Qwen2.5-7B got
+1/52 right.
 
-1. installs the package and starts an Ollama server with `qwen2.5:7b-instruct`,
-2. lets you upload a PDF and ask questions (with a Gradio chat UI),
-3. optionally reproduces the benchmark.
+**Which answer model?** Same retriever, reranker and prompts; only the language model swapped (Kaggle T4, 29 Oct):
 
-## Web app (document library)
+| Answer model (4-bit) | English correct | Unanswerable refused | Multilingual correct | Median answer time | Peak GPU memory |
+|---|---:|---:|---:|---:|---:|
+| **Qwen2.5-7B-Instruct (chosen)** | **44/52** | **9/9** | **17/18** | **6.9 s** | 9,345 MiB |
+| Llama-3.1-8B | 44/52 | 6/9 | 17/18 | 15.0 s | 10,103 MiB |
+| Gemma-2-9B | 44/52 | 9/9 | 17/18 | 10.7 s | 12,045 MiB |
+| Mistral-7B-Instruct | 39/52 | 9/9 | 12/18 | 9.8 s | 9,799 MiB |
+| Qwen2.5-3B-Instruct | 29/52 | 8/9 | 11/18 | 5.3 s | 6,731 MiB |
 
-A browser app for real use: upload PDFs of any length, watch them process in the background,
-ask questions across any subset of documents, and click a citation to see the source page
-with the cited passage highlighted.
+Three models tie on accuracy. Qwen2.5-7B refuses every unanswerable question, is the fastest of the three
+and uses the least memory. The prompts were developed with Qwen, which may favour it.
+
+**Long documents** (synthetic table-heavy PDFs with 40 independently written questions per size, Kaggle T4, 27 Oct):
+
+| | 100 pages | 1,000 pages | 10,000 pages |
+|---|---:|---:|---:|
+| Processing time, table detection on the GPU | 30 s | 3.8 min | 37 min |
+| Processing time, table detection on the CPU (default) | 55 s | 5.7 min | 71 min |
+| Right page in top 5 / answers correct | 0.97 / 0.75 | 0.94 / 0.72 | 0.89 / 0.72 |
+| Median answer time | 6.3 s | 6.1 s | 6.0 s |
+| Index on disk / load time | 2 MB / 0.0 s | 19 MB / 0.1 s | 189 MB / 0.9 s |
+
+At every size a parse worker was killed mid-page and a job was interrupted half-way; both recovered. The
+web app served 1 to 8 concurrent users with no failed request, at about 10.5 answers per minute on one T4.
+
+**Still weak** (also measured): questions that combine facts from several pages (5/9), questions that
+assume something the document does not say (6/9 refused on real documents), and the numeric fixes were tuned
+on the English set and showed no gain on synthetic documents. Full list in [docs/STATUS.md](docs/STATUS.md).
+
+## Run it
+
+**Docker (GPU machine):**
+
+```bash
+docker compose up --build            # web app, Ollama and the model; open http://127.0.0.1:8000
+scripts/smoke_install.sh             # optional end-to-end check of the install
+```
+
+Without an NVIDIA GPU, add `-f docker-compose.cpu.yml` (works, but slowly: a one-page PDF took 40 s from upload to a cited answer on a 16-core laptop CPU). The image was
+built and passed the smoke test with the real 7B model on a CPU host; the GPU path inside Docker has not
+been tested yet. Requirements, options and security notes: [docs/DEPLOY.md](docs/DEPLOY.md).
+
+**pip + Ollama:**
 
 ```bash
 pip install -e ".[web]"
-ollama serve & ollama pull qwen2.5:7b-instruct          # the local LLM
-python -m local_agentic_rag.server --library ~/rag-library --port 8000
-# open http://127.0.0.1:8000/
+ollama serve & ollama pull qwen2.5:7b-instruct
+python -m local_agentic_rag.server --library ~/rag-library --port 8000   # open http://127.0.0.1:8000/
 ```
 
-* **Large PDFs:** uploads stream to disk (default limit 2 GB). Processing runs in a
-  background queue with live progress, page counts and an ETA. A 10,000-page PDF is read by
-  parallel, crash-isolated worker processes and indexed in checkpointed batches. If the
-  server stops, the job resumes from its last checkpoint on restart.
-* **Several users:** answers run with a configurable concurrency limit
-  (`--max-concurrent-asks`, default 2 for one GPU); others queue and see their position.
-  Questions can be asked while another document is still processing.
-* **Ask before processing finishes:** once the first batch of a long PDF is indexed, it can
-  be questioned. The answer says how many pages it was drawn from ("answered from the first
-  n of N pages").
-* **Streaming answers:** the answer appears word by word, then is replaced by the verified
-  answer with its citations.
-* **Sources you can check:** every answer has citation chips (`[1] p.42`) that open the
-  rendered page with the passage highlighted, plus a "how this answer was found" trace.
-  "Which table…" answers name the cited table's printed number.
-* **Private:** everything runs locally; it listens on 127.0.0.1 unless you pass `--host`.
-  `--token` (or `LOCAL_RAG_TOKEN`) requires an access token for every API call, and uploads
-  are limited per client address; see [docs/DEPLOY.md](docs/DEPLOY.md).
-* **Faster tables on a GPU (opt-in):** `LOCAL_RAG_ONNX_GPU=1` runs table detection on the GPU
-  (1.9x faster parsing of table-heavy PDFs on a T4); needs `onnxruntime-gpu`, see
-  [docs/DEPLOY.md](docs/DEPLOY.md#faster-table-detection-on-a-gpu).
-* In Colab, the notebook's section 7b starts the same app through Colab's private port proxy.
-* `python -m local_agentic_rag.server --demo` runs the interface with a fake backend
-  (no GPU or LLM needed), for trying the UI.
+`python -m local_agentic_rag.server --demo` runs the interface with a fake backend, no GPU needed.
 
-## Quick start (Python)
+**Google Colab:** open `notebooks/Local_Agentic_RAG.ipynb`, choose **Runtime → Change runtime type → T4 GPU**
+and run the cells in order. It installs the package, starts Ollama with Qwen2.5-7B, lets you upload a PDF
+and ask questions, starts the web app through Colab's port proxy (section 7b) and can reproduce the
+benchmarks.
+
+**From Python:**
 
 ```python
 from local_agentic_rag.config import RAGConfig
 from local_agentic_rag.pipeline import RAGPipeline
-from local_agentic_rag.llm.ollama import OllamaLLM   # or llm.llamacpp.LlamaCppLLM("model.gguf")
+from local_agentic_rag.llm.ollama import OllamaLLM
 
 llm = OllamaLLM("qwen2.5:7b-instruct"); llm.ensure_ready()
 pipe = RAGPipeline(RAGConfig(), llm=llm)
-print(pipe.ingest("report.pdf"))
+pipe.ingest("report.pdf")
 ans = pipe.ask("What was revenue growth in 2024?")
 print(ans.answer, ans.cited_pages, ans.grounded)
 follow = pipe.ask("And in 2023?", history=[("What was revenue growth in 2024?", ans.answer)])
 ```
 
-## Results at a glance (final code, project notebook run top to bottom on a T4, 2026-10-26)
+## The web app
 
-| | English set (61 q) | Multilingual set (20 q) |
-|---|---|---|
-| Page recall@5, original baseline → default retriever | 73.1% → 94.2% (recall@1 43% → 68%; English-only reranker 96.2%) | English-only → multilingual models: 0.944 → 1.000 |
-| Answer accuracy, default adaptive agent | **84.6%** (44/52) with the numerical fixes (27 Oct, runs 5–6; numerical 2/6 → 5/6); 76.9% [63.5–88.5] before them; single pass 71.2%; original baseline design 50.0% | 88.9% (16/18) in the final run, 94.4% in the previous run of the same code: Hindi 7–8/8 (incl. scanned/OCR), Hinglish 3/3, Marathi 3/3, English→Indic 3/4 |
-| Unanswerable questions refused | 9 / 9 | 2 / 2 |
-| GPU memory in use (all models loaded) | 8.9 of 15 GB | |
+![The web app on a free Colab T4](docs/img/chat_ui_colab_t4.png)
 
-The final runs used a Kaggle notebook with the same GPU (Tesla T4, pinned to one card) because the
-free Colab GPU quota was used up; the notebook itself is unchanged and targets Colab.
+- Upload PDFs of any length (streamed to disk, 2 GB limit by default) and watch them process with live
+  progress and an estimate of the time left.
+- Ask across any set of ticked documents, including one that is still processing; the answer then says
+  "answered from the first n of N pages".
+- Answers stream word by word, then are replaced by the verified answer with its citation chips and a
+  "how this answer was found" trace.
+- Listens on 127.0.0.1 unless you pass `--host`. `--token` (or `LOCAL_RAG_TOKEN`) requires an access
+  token for every API call; uploads are limited per client address.
+- `LOCAL_RAG_ONNX_GPU=1` runs table detection on the GPU, 1.9× faster on table-heavy PDFs
+  ([details](docs/DEPLOY.md#faster-table-detection-on-a-gpu)).
 
-**Long documents and several users** (Kaggle T4, final code, 27 Oct; details in [docs/SCALE.md](docs/SCALE.md)):
+![Hindi and Hinglish questions about an English paper, answered in the question's language](docs/img/multilingual_answers_colab_t4.png)
 
-| | 100 pages | 1,000 pages | 10,000 pages |
-|---|---:|---:|---:|
-| Ingestion (2 parse workers, table-heavy synthetic PDF, table detection on the GPU) | 30 s | 3.8 min | 37 min |
-| Ingestion with table detection on the CPU (the default; 26 Oct) | 55 s | 5.7 min | 71 min |
-| Page recall@5 / answer accuracy (40 independent questions per size) | 0.97 / 0.75 | 0.94 / 0.72 | 0.89 / 0.72 |
-| Answer latency p50 | 6.3 s | 6.1 s | 6.0 s |
-| Index on disk / cold load | 2 MB / 0.0 s | 19 MB / 0.1 s | 189 MB / 0.9 s |
-
-A crashed parse worker costs one page; an interrupted job resumes from its checkpoint (tested at
-every size). On real PDFs (9/11 Report, Statistical Abstract 2012, US Code Title 26) with 46
-independently written questions: 30/37 answerable correct (26/37 before the sprint fixes), 6/9
-unanswerable refused. On a held-out legal code (US Code Title 21): 19/25 answerable; on a Hindi audit
-report, 9/14 answerable (answers only); a third held-out document (GAO Cost Guide) was not run because
-its download was refused. Retrieval and answer quality at every size matched the 26 Oct run. The web app served 1–8 concurrent users with no failed request (about 10.5 answers per minute on one T4).
-
-A 5-page report with the architecture, benchmarks and plan is `report/main.tex` (build with `report/build.sh`); the 26 Oct progress report is [report/Local_Agentic_RAG_Progress_Report.pdf](report/Local_Agentic_RAG_Progress_Report.pdf).
-Details, confidence intervals, per-category and per-language breakdowns: [docs/RESULTS.md](docs/RESULTS.md).
-
-## Benchmark
+## Reproduce the benchmarks
 
 ```bash
-python benchmark/fetch_pdfs.py                       # downloads the 3 public PDFs (sha256-verified)
-python -m local_agentic_rag.bench retrieval          # retrieval ablation, CPU is fine
+python benchmark/fetch_pdfs.py                        # the 3 public PDFs, sha256-checked
+python -m local_agentic_rag.bench retrieval           # retrieval ablation; a CPU is enough
 python -m local_agentic_rag.bench answer --llm ollama:qwen2.5:7b-instruct
-# multilingual set (Hindi / Marathi / Hinglish / OCR)
 python -m local_agentic_rag.bench answer --benchmark-dir benchmark/multilingual --configs agentic agentic_en
 ```
 
-### Scale benchmark (100 to 10,000 pages)
+Long documents (100 to 10,000 pages):
 
 ```bash
-python benchmark/scale/make_corpus.py --pages all --out local/scale/corpus   # synthetic, with planted facts
+python benchmark/scale/make_corpus.py --pages all --out local/scale/corpus     # synthetic, facts planted
 python benchmark/scale/run_scale.py --tiers 100 250 1000 2500 5000 10000 \
     --llm ollama:qwen2.5:7b-instruct --recovery --out local/scale/results
-python benchmark/scale/run_realdocs.py --llm ollama:qwen2.5:7b-instruct      # real public-domain PDFs
+python benchmark/scale/run_realdocs.py --llm ollama:qwen2.5:7b-instruct       # real public-domain PDFs
 python benchmark/scale/load_test.py --url http://127.0.0.1:8000 --users 1 2 4 8 \
     --questions local/scale/corpus/scale-1000.questions.jsonl
 ```
 
-`run_scale.py` measures ingestion time per stage, peak RAM and GPU memory, index size,
-cold-load time, retrieval recall/latency by question type and document depth, answer
-accuracy and citation precision, and failure recovery (a crashed parse worker plus a job
-interrupted half-way and resumed). Every number it writes is measured in that run; tiers not
-run are reported as "not run". See `benchmark/scale/README.md` for what the synthetic corpus
-contains and its limits.
+`run_scale.py` records processing time per stage, peak RAM and GPU memory, index size, load time, retrieval
+and answer quality by question type and page depth, and failure recovery. Sizes that were not run are
+reported as "not run". See [benchmark/scale/README.md](benchmark/scale/README.md) for what the synthetic
+corpus contains and its limits.
+
+## Repository
+
+```
+src/local_agentic_rag/
+  ingest/       PDF reading, tables, OCR, chunking, streaming checkpointed ingestion
+  retrieval/    BGE-M3 embedder, BM25, fusion, reranker, on-disk index
+  agent/        prompts, citations, calculator, the adaptive agent
+  llm/          Ollama and llama.cpp backends
+  server/       FastAPI web app and its offline single-page frontend
+  library.py    document library: catalog, background queue, answers, page images
+  eval/, bench.py   benchmark runner and metrics
+benchmark/      question sets, validators, scale and load tests
+notebooks/      the Colab / Kaggle notebook
+docs/           architecture, results, scale, deployment, status
+report/         project report (LaTeX source and PDF)
+tests/          offline test suite (models are faked)
+```
 
 ## Development
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest -q            # offline unit tests (models are faked)
+pip install -e ".[dev,web]"
+pytest -q              # 879 offline tests, about 90 s, no downloads
 ruff check src tests
 ```
 
-## License
+## Project report
 
-Private repository, not licensed for redistribution. (PyMuPDF, the PDF parser, is AGPL-3.0; that
-would matter only if the project were ever distributed.)
+[report/Local_Agentic_RAG_Progress_Report.pdf](report/Local_Agentic_RAG_Progress_Report.pdf): architecture,
+benchmarks and status in five pages (source `report/main.tex`, build with `report/build.sh`).
 
-The English benchmark PDFs are downloaded from their public sources and are not stored in
-the repository. The multilingual test PDFs are generated from Wikipedia text
-(CC BY-SA 4.0, attribution in `benchmark/multilingual/README.md`).
+## License and data
+
+Private repository, not licensed for redistribution. (PyMuPDF, the PDF parser, is AGPL-3.0; that would
+matter only if the project were distributed.)
+
+The English benchmark PDFs are downloaded from their public sources and are not stored in the repository.
+The multilingual test PDFs are generated from Wikipedia text (CC BY-SA 4.0, attribution in
+[benchmark/multilingual/README.md](benchmark/multilingual/README.md)).
