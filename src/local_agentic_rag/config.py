@@ -76,7 +76,7 @@ class RAGConfig:
     max_answer_attempts: int = 2  # generation + one regeneration on failed verification
     grader_override_score: float = 0.2  # keep grader-rejected passages above this reranker score
     history_turns: int = 3  # chat turns used to condense follow-ups
-    # F11 (experimental): after the answer is final, if the verifier did NOT support it and the
+    # Presupposition gate (experimental): after the answer is final, if the verifier did NOT support it and the
     # question names a year / proper-noun phrase / code found in none of the retrieved
     # passages, replace the answer with the standard refusal (agent/presupposition.py).
     presupposition_check: bool = False
@@ -170,7 +170,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     "agentic": {},
     # Always-on agent loop, kept for the ablation.
     "agentic_full": {"agent_mode": "full"},
-    # Adaptive agent + the F11 presupposition gate (flag off in every other preset).
+    # Adaptive agent + the presupposition gate (flag off in every other preset).
     "agentic_presup": {"presupposition_check": True},
     # The default agent before the numerical fixes (results up to 27 Oct were measured with
     # this), and each fix added to it on its own (the run 5 ablation).

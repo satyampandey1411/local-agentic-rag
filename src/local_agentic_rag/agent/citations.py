@@ -136,7 +136,7 @@ def is_refusal(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# "Which table / figure ...?" answers must name the table (roadmap F6)
+# "Which table / figure ...?" answers must name the table
 # ---------------------------------------------------------------------------
 #
 # A 7B model often answers "Which table shows X?" by describing the table it found

@@ -1,4 +1,4 @@
-"""F11 presupposition gate: the entity extractor and the agent hook (scripted LLM, no models)."""
+"""Presupposition gate: the entity extractor and the agent hook (scripted LLM, no models)."""
 
 from __future__ import annotations
 

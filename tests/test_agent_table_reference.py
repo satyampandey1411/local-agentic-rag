@@ -1,4 +1,4 @@
-"""F6: "which table shows X?" answers name the cited table (deterministic, no prompt change)."""
+""""Which table shows X?" answers name the cited table (deterministic, no prompt change)."""
 
 from __future__ import annotations
 

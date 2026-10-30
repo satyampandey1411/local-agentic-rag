@@ -723,7 +723,11 @@ def create_app(
 
     # ------------------------------------------------------------------ frontend
 
-    @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    @app.api_route(
+        "/api/{rest:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
     def api_not_found(rest: str) -> None:
         raise HTTPException(404, f"No such API endpoint: /api/{rest}")
 

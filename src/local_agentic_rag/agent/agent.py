@@ -117,7 +117,7 @@ class AgenticRAG:
         return ans
 
     def _presupposition_gate(self, ans: Answer) -> None:
-        """F11 (``RAGConfig.presupposition_check``, off by default): refuse a question whose
+        """Presupposition gate (``RAGConfig.presupposition_check``, off by default): refuse a question whose
         year, proper-noun phrase or code is in none of the retrieved passages.
 
         Deliberately narrow: only when the flag is on, the verifier ran and did NOT find the

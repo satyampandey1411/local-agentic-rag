@@ -1,5 +1,5 @@
 """
-Presupposition gate (F11, off by default): refuse when a question names something the
+Presupposition gate (off by default): refuse when a question names something the
 retrieved passages do not contain.
 
 Background.  "What powers does the Intelligence Reform Act of 2004 give the DNI?" asked of a

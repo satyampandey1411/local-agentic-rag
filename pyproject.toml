@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local agentic RAG chatbot for any PDF — hybrid retrieval, reranking, a bounded verify-and-retry agent, cited answers, runs on a free Colab T4"
 requires-python = ">=3.10"
 readme = "README.md"
-# License: to be decided before any public release (note: PyMuPDF is AGPL-3.0).
+# Private repository, not licensed for redistribution (PyMuPDF is AGPL-3.0).
 
 # torch and numpy are intentionally NOT pinned: Colab pre-installs matched
 # CUDA builds and re-installing them breaks the runtime.

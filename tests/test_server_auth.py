@@ -1,4 +1,4 @@
-"""F7: optional access token (Bearer or session cookie), per-IP upload limits, quota."""
+"""Optional access token (Bearer or session cookie), per-IP upload limits, quota."""
 
 from __future__ import annotations
 

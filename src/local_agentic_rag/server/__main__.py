@@ -103,11 +103,7 @@ def _ollama_url(host: str) -> str:
     return host if "://" in host else f"http://{host}"
 
 
-# =====================================================================================
-# TODO(lead engineer): finish once ``local_agentic_rag.library`` lands.
-# This is the ONLY place the server touches the concrete backend.  Adjust the
-# Library(...) / OllamaLLM(...) arguments to the final constructor signatures.
-# =====================================================================================
+# The only place the server touches the concrete backend.
 def _build_library(args: argparse.Namespace) -> LibraryProtocol:
     from local_agentic_rag.library import Library  # lazy: heavy imports (torch, models)
     from local_agentic_rag.llm.ollama import OllamaLLM
@@ -133,15 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         upload_dir = args.upload_dir
     else:
         os.makedirs(args.library, exist_ok=True)
-        try:
-            library = _build_library(args)
-        except ModuleNotFoundError as exc:
-            if exc.name != "local_agentic_rag.library":
-                raise
-            raise SystemExit(
-                "local_agentic_rag.library is not available yet. "
-                "Run with --demo to try the UI without it."
-            ) from None
+        library = _build_library(args)
         upload_dir = args.upload_dir or os.path.join(args.library, ".incoming")
 
     app = create_app(

@@ -81,7 +81,9 @@ def open_pdf(pdf_path: str | Path):
     try:
         doc = pymupdf.open(str(path))
     except Exception as exc:  # pymupdf.FileDataError and friends
-        raise PDFParseError(f"Could not open {path.name!r} as a PDF: {exc}") from exc
+        # The library's message names the stored file's full path; keep it out of the UI.
+        logger.warning("pymupdf could not open %s: %s", path, exc)
+        raise PDFParseError(f"Could not open {path.name!r} as a PDF; the file may be damaged.") from exc
     try:
         if not doc.is_pdf:
             raise PDFParseError(f"{path.name!r} is not a PDF file.")
