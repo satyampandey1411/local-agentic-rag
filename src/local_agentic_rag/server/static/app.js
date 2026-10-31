@@ -869,7 +869,14 @@
       dataset: { msg: m.id, marker: c.marker },
       attrs: { 'aria-label': `Source ${c.marker}: ${doc ? doc.title + ', ' : ''}page ${c.page}`, title: c.snippet || '' },
       on: { click: () => openCitation(m.id, c.marker) },
-    }, `[${c.marker}]`, h('span', { className: 'chip-page', text: `p.${c.page}` }));
+    }, `[${c.marker}]`, ...(manyDocs(m) && doc ? [h('span', { className: 'chip-doc', text: doc.title })] : []),
+    h('span', { className: 'chip-page', text: `p.${c.page}` }));
+  }
+
+  // Name the book on each citation when the question searched more than one.
+  function manyDocs(m) {
+    const ids = m.docIds && m.docIds.length ? m.docIds : askableDocs().map((d) => d.doc_id);
+    return ids.length > 1;
   }
 
   function buildAnswer(m) {
