@@ -1,0 +1,688 @@
+<title>Local Agentic RAG Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one long technical walkthrough. A live system map, then the two flows (reading a PDF, answering a question)
+   as "diagram + live readout" pairs, then the evidence. Lane colours say where work runs: CPU, GPU search model, LLM, user. */
+:root {
+  --paper:#f3f5f8; --panel:#ffffff; --ink:#0d1624; --soft:#4a5668; --mute:#6b7789; --rule:#d5dce6; --rule2:#e8edf3;
+  --cpu:#b45309; --cpu-t:#fdf2e4; --gpu:#0f766e; --gpu-t:#e3f4f1; --llm:#1d4ed8; --llm-t:#e9effd;
+  --you:#6d28d9; --you-t:#f1ebfd; --sys:#475569; --sys-t:#eef1f5;
+  --ok:#15803d; --bad:#b91c1c; --hl:#fde68a; --focus:#1d4ed8;
+  --f-display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"DejaVu Sans Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper:#0b111a; --panel:#111a26; --ink:#e6ecf4; --soft:#a5b1c2; --mute:#7f8b9d; --rule:#27354a; --rule2:#1a2534;
+  --cpu:#f0a24a; --cpu-t:#2a1d0f; --gpu:#3cc7b4; --gpu-t:#0d2523; --llm:#7ea9ff; --llm-t:#122038;
+  --you:#b597fb; --you-t:#211a37; --sys:#9aa8bb; --sys-t:#18212e; --ok:#4ade80; --bad:#f87171; --hl:#5f4c12; --focus:#7ea9ff;
+  color-scheme:dark; } }
+:root[data-theme="dark"] {
+  --paper:#0b111a; --panel:#111a26; --ink:#e6ecf4; --soft:#a5b1c2; --mute:#7f8b9d; --rule:#27354a; --rule2:#1a2534;
+  --cpu:#f0a24a; --cpu-t:#2a1d0f; --gpu:#3cc7b4; --gpu-t:#0d2523; --llm:#7ea9ff; --llm-t:#122038;
+  --you:#b597fb; --you-t:#211a37; --sys:#9aa8bb; --sys-t:#18212e; --ok:#4ade80; --bad:#f87171; --hl:#5f4c12; --focus:#7ea9ff;
+  color-scheme:dark; }
+
+* { box-sizing:border-box; }
+body { background:var(--paper); color:var(--ink); font-family:var(--f-body); font-size:16px; line-height:1.55; margin:0; }
+.wrap { max-width:1240px; margin:0 auto; padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); padding-block:40px 64px; }
+h1, h2, h3 { font-family:var(--f-display); text-wrap:balance; margin:0; letter-spacing:-.015em; }
+h1 { font-size:clamp(36px, 6vw, 64px); line-height:1.02; font-weight:700; }
+h2 { font-size:clamp(26px, 3.4vw, 36px); line-height:1.1; font-weight:700; }
+h3 { font-size:19px; font-weight:700; }
+p { margin:0; }
+.mono { font-family:var(--f-mono); }
+.eyebrow { font-family:var(--f-mono); font-size:12.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); }
+.lede { font-size:19px; color:var(--soft); max-width:62ch; }
+.prose { max-width:66ch; color:var(--soft); }
+button { font:inherit; }
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; border-radius:6px; }
+
+/* header */
+header.top { display:grid; gap:18px; padding-bottom:28px; border-bottom:1px solid var(--rule); }
+.legend { display:flex; flex-wrap:wrap; gap:8px 18px; font-size:14px; color:var(--soft); }
+.legend span { display:inline-flex; align-items:center; gap:7px; }
+.legend i { width:14px; height:14px; border-radius:4px; border:2px solid; display:inline-block; }
+.l-cpu { background:var(--cpu-t); border-color:var(--cpu)!important; } .l-gpu { background:var(--gpu-t); border-color:var(--gpu)!important; }
+.l-llm { background:var(--llm-t); border-color:var(--llm)!important; } .l-you { background:var(--you-t); border-color:var(--you)!important; }
+.l-sys { background:var(--sys-t); border-color:var(--sys)!important; }
+nav.toc { display:flex; flex-wrap:wrap; gap:8px; }
+nav.toc a { color:var(--ink); text-decoration:none; font-size:14px; border:1px solid var(--rule); background:var(--panel); padding:6px 12px; border-radius:999px; }
+nav.toc a:hover { border-color:var(--soft); }
+nav.toc b { font-family:var(--f-mono); font-weight:500; color:var(--mute); margin-right:6px; }
+.facts { display:flex; flex-wrap:wrap; gap:10px 28px; font-size:14.5px; color:var(--soft); }
+.facts b { color:var(--ink); font-family:var(--f-mono); font-weight:500; }
+
+section.sec { padding-top:52px; display:grid; gap:20px; scroll-margin-top:12px; }
+.sec-head { display:grid; gap:10px; }
+.sec-head .eyebrow b { color:var(--ink); font-weight:500; }
+
+/* controls */
+.controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.btn { border:1px solid var(--rule); background:var(--panel); color:var(--ink); padding:7px 14px; border-radius:8px; cursor:pointer; font-size:14px; }
+.btn:hover { border-color:var(--soft); }
+.btn[aria-pressed="true"] { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+.btn.ghost { background:transparent; }
+.ctl-note { font-size:13px; color:var(--mute); margin-left:auto; }
+
+/* system map */
+.card { background:var(--panel); border:1px solid var(--rule); border-radius:14px; }
+.map { padding:18px; display:grid; gap:14px; }
+.svgbox { overflow-x:auto; }
+.svgbox svg { display:block; width:100%; min-width:860px; height:auto; }
+svg text { font-family:var(--f-body); fill:var(--ink); }
+svg .t1 { font-size:15px; font-weight:600; } svg .t2 { font-size:12.5px; fill:var(--soft); } svg .t3 { font-size:11.5px; fill:var(--mute); font-family:var(--f-mono); }
+svg .nd rect { stroke-width:2; transition:stroke-width .2s, filter .2s; }
+svg .nd.cpu rect { fill:var(--cpu-t); stroke:var(--cpu); } svg .nd.gpu rect { fill:var(--gpu-t); stroke:var(--gpu); }
+svg .nd.llm rect { fill:var(--llm-t); stroke:var(--llm); } svg .nd.you rect { fill:var(--you-t); stroke:var(--you); }
+svg .nd.sys rect { fill:var(--sys-t); stroke:var(--sys); }
+svg .nd.on rect { stroke-width:3.5; }
+svg .frame { fill:none; stroke:var(--gpu); stroke-width:1.5; stroke-dasharray:6 5; }
+svg .framelbl { font-family:var(--f-mono); font-size:12px; fill:var(--gpu); letter-spacing:.04em; }
+svg .ed { fill:none; stroke:var(--rule); stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; transition:stroke .2s; }
+svg .ed.on { stroke:var(--ink); stroke-width:3; }
+svg .pkt { stroke:var(--panel); stroke-width:2.5; }
+svg .pkt.upload { fill:var(--you); } svg .pkt.ask { fill:var(--llm); }
+svg .bar-bg { fill:var(--rule2); stroke:var(--rule); } svg .bar-fg { fill:var(--gpu); }
+.hops { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:8px; counter-reset:h; }
+.hops li { counter-increment:h; font-size:14px; color:var(--soft); padding:9px 12px 9px 40px; border:1px solid var(--rule2); border-radius:10px; position:relative; cursor:pointer; background:var(--paper); }
+.hops li::before { content:counter(h); position:absolute; left:12px; top:9px; font-family:var(--f-mono); font-size:12.5px; color:var(--mute); }
+.hops li.on { border-color:var(--ink); color:var(--ink); background:var(--panel); }
+.hops li.on::before { color:var(--ink); }
+
+/* two-column flow + readout */
+.duo { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 470px); gap:22px; align-items:start; }
+.readout { position:sticky; top:calc(env(safe-area-inset-top, 0px) + 14px); padding:18px; display:grid; gap:14px; min-height:420px; align-content:start; }
+.readout .rh { display:flex; justify-content:space-between; gap:10px; align-items:baseline; border-bottom:1px solid var(--rule2); padding-bottom:10px; }
+.readout .rh .eyebrow b { color:var(--ink); font-weight:500; }
+.calls { font-family:var(--f-mono); font-size:13px; color:var(--soft); white-space:nowrap; }
+.calls b { color:var(--llm); font-weight:500; font-size:15px; }
+
+/* stage list */
+.stages { list-style:none; margin:0; padding:0; display:grid; gap:0; }
+.st { position:relative; padding:0 0 18px 56px; }
+.st::before { content:""; position:absolute; left:19px; top:40px; bottom:0; width:2px; background:var(--rule); }
+.st:last-child::before { display:none; }
+.st .dot { position:absolute; left:0; top:2px; width:40px; height:40px; border-radius:50%; display:grid; place-items:center; font-family:var(--f-mono); font-size:14px; font-weight:500; border:2px solid; background:var(--panel); transition:transform .25s; }
+.st .box { border:1px solid var(--rule); background:var(--panel); border-radius:12px; padding:12px 16px; display:grid; gap:5px; transition:border-color .2s, box-shadow .2s; }
+.st .tag { font-family:var(--f-mono); font-size:12px; letter-spacing:.03em; color:var(--mute); }
+.st p { font-size:15px; color:var(--soft); }
+.st.cpu .dot { border-color:var(--cpu); color:var(--cpu); } .st.gpu .dot { border-color:var(--gpu); color:var(--gpu); }
+.st.llm .dot { border-color:var(--llm); color:var(--llm); } .st.you .dot { border-color:var(--you); color:var(--you); }
+.st.sys .dot { border-color:var(--sys); color:var(--sys); }
+.st.on .box { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); }
+.st.on .dot { transform:scale(1.08); }
+.st.cpu.on .dot { background:var(--cpu-t); } .st.gpu.on .dot { background:var(--gpu-t); } .st.llm.on .dot { background:var(--llm-t); }
+.st.you.on .dot { background:var(--you-t); } .st.sys.on .dot { background:var(--sys-t); }
+.st.on::before { background:linear-gradient(var(--ink), var(--rule)); }
+.st.side .box { border-style:dashed; background:transparent; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+.chip { font-size:13px; border:1px solid var(--rule); border-radius:999px; padding:3px 10px; color:var(--soft); background:var(--paper); }
+.loopbox { margin:0 0 18px 56px; border:2px dashed var(--llm); border-radius:14px; padding:14px 14px 0; position:relative; display:grid; }
+.loopbox > .lbl { font-size:14px; color:var(--llm); font-weight:600; margin-bottom:12px; }
+.loopbox > .lbl span { font-weight:400; color:var(--soft); }
+.loopbox .st { padding-left:52px; }
+.loopbox .st .dot { width:36px; height:36px; font-size:13px; }
+.loopbox .st::before { left:17px; top:36px; }
+.loopwrap { position:relative; }
+.loopwrap::before { content:""; position:absolute; left:19px; top:0; bottom:0; width:2px; background:var(--rule); }
+
+/* ingest */
+.grid585 { display:grid; grid-template-columns:repeat(39, 1fr); gap:2px; }
+.grid585 div { aspect-ratio:1; border-radius:2px; background:var(--rule2); transition:background .15s; }
+.grid585 div.rd { background:var(--cpu); opacity:.55; }
+.grid585 div.ix { background:var(--gpu); }
+.grid585 div.fl { background:var(--ink); opacity:.35; }
+.prog { display:grid; gap:10px; }
+.prow { display:grid; gap:4px; }
+.prow .pl { display:flex; justify-content:space-between; font-size:13px; color:var(--soft); gap:8px; }
+.prow .pl b { font-family:var(--f-mono); font-weight:500; color:var(--ink); }
+.ptrack { height:10px; border-radius:6px; background:var(--rule2); overflow:hidden; position:relative; }
+.ptrack span { position:absolute; inset:0 auto 0 0; width:0; border-radius:6px; }
+.ptrack.p1 span { background:var(--cpu); } .ptrack.p2 span { background:var(--gpu); }
+.status { font-size:14.5px; min-height:3.2em; color:var(--ink); }
+.status.bad { color:var(--bad); }
+.badge { display:inline-flex; align-items:center; gap:8px; font-size:13.5px; border-radius:999px; padding:5px 12px; border:1px solid var(--rule); color:var(--mute); }
+.badge::before { content:""; width:9px; height:9px; border-radius:50%; background:var(--rule); }
+.badge.live { color:var(--ok); border-color:var(--ok); }
+.badge.live::before { background:var(--ok); }
+.kv { display:flex; flex-wrap:wrap; gap:6px 18px; font-size:13px; color:var(--mute); }
+.kv b { font-family:var(--f-mono); font-weight:500; color:var(--ink); }
+.flash { animation:flash .9s ease-out; }
+@keyframes flash { 0% { box-shadow:0 0 0 3px var(--bad); } 100% { box-shadow:0 0 0 0 transparent; } }
+
+/* ask readout pieces */
+.pv { display:grid; gap:12px; animation:pvIn .35s ease-out; }
+@keyframes pvIn { from { opacity:.25; transform:translateY(4px); } to { opacity:1; transform:none; } }
+.bubble { background:var(--you-t); border:1px solid var(--you); border-radius:14px 14px 14px 4px; padding:12px 14px; font-weight:500; }
+.doc { display:flex; gap:8px; align-items:center; font-size:14px; color:var(--soft); }
+.doc .tick { width:16px; height:16px; border-radius:4px; background:var(--you); display:grid; place-items:center; color:var(--panel); font-size:11px; flex:none; }
+.note { font-size:14px; color:var(--soft); }
+.small { font-size:13px; color:var(--mute); }
+.checks { display:grid; gap:8px; }
+.checks div { display:grid; grid-template-columns:1fr auto; gap:10px; font-size:14px; border:1px solid var(--rule2); border-radius:10px; padding:8px 12px; }
+.checks div span:last-child { color:var(--mute); text-align:right; }
+.funnel { display:grid; gap:8px; }
+.fn { display:grid; grid-template-columns:96px 1fr; gap:12px; align-items:center; opacity:.2; transform:translateX(-6px); transition:opacity .4s, transform .4s; }
+.fn.in { opacity:1; transform:none; }
+.fn .n { font-family:var(--f-mono); font-size:24px; font-weight:500; text-align:right; }
+.fn .w { font-size:14px; color:var(--soft); }
+.fn .bar { height:6px; border-radius:4px; margin-top:4px; }
+.psg { display:grid; gap:6px; }
+.psg div { display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:center; font-size:13.5px; color:var(--mute); }
+.psg .nm { font-family:var(--f-mono); color:var(--soft); }
+.psg .b { height:24px; border-radius:6px; background:var(--rule2); display:flex; align-items:center; padding:0 9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.psg .hit .b { background:var(--gpu-t); border:1px solid var(--gpu); color:var(--ink); }
+.quote { border-left:3px solid var(--gpu); padding:6px 12px; font-size:14px; color:var(--ink); background:var(--gpu-t); border-radius:0 8px 8px 0; }
+.stream { font-family:var(--f-mono); font-size:22px; border:1px solid var(--llm); background:var(--llm-t); border-radius:10px; padding:14px 16px; min-height:62px; }
+.stream .cur { display:inline-block; width:10px; height:22px; background:var(--llm); vertical-align:-3px; margin-left:2px; animation:blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity:0; } }
+.rules { margin:0; padding-left:18px; font-size:14px; color:var(--soft); display:grid; gap:3px; }
+.claim { display:grid; grid-template-columns:1fr auto; gap:6px 12px; border:1px solid var(--rule); border-radius:10px; padding:10px 12px; font-size:14px; }
+.claim .v { font-weight:600; }
+.claim .v.ok { color:var(--ok); } .claim .v.bad { color:var(--bad); }
+.cite { font-family:var(--f-mono); font-size:12.5px; background:var(--llm-t); color:var(--llm); border:1px solid var(--llm); border-radius:6px; padding:1px 6px; }
+.answer { border:1px solid var(--rule); border-radius:12px; padding:12px 14px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:17px; }
+.answer .vf { color:var(--ok); font-weight:600; font-size:13.5px; margin-left:auto; }
+.page { border:1px solid var(--rule); border-radius:8px; padding:14px 16px; display:grid; gap:7px; background:var(--panel); position:relative; }
+.page .pn { position:absolute; right:12px; top:8px; font-family:var(--f-mono); font-size:11.5px; color:var(--mute); }
+.page i { display:block; height:7px; border-radius:3px; background:var(--rule2); }
+.page mark { background:var(--hl); color:var(--ink); font-size:13.5px; padding:3px 6px; border-radius:4px; }
+.why { border:1px solid var(--rule); border-radius:12px; padding:14px 16px; font-size:14.5px; color:var(--soft); background:var(--panel); max-width:760px; }
+.why b { color:var(--ink); }
+
+/* models */
+.tbl { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; min-width:720px; font-size:14.5px; }
+th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--rule2); vertical-align:middle; }
+th { font-family:var(--f-mono); font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--mute); font-weight:500; }
+td.num { font-family:var(--f-mono); font-variant-numeric:tabular-nums; }
+tr.pick td { background:var(--llm-t); }
+tr.pick td:first-child { box-shadow:inset 3px 0 0 var(--llm); }
+.pickt { font-family:var(--f-mono); font-size:11px; color:var(--llm); border:1px solid var(--llm); border-radius:5px; padding:1px 5px; margin-left:6px; vertical-align:1px; }
+.minibar { display:inline-block; height:8px; border-radius:4px; background:var(--llm); vertical-align:middle; margin-left:8px; opacity:.75; }
+.choices { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:12px; }
+.choice { padding:14px 16px; display:grid; gap:6px; }
+.choice .eyebrow { font-size:11.5px; }
+.choice .big { font-family:var(--f-mono); font-size:20px; font-weight:500; }
+.choice p { font-size:14px; color:var(--soft); }
+
+/* results */
+.tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; }
+.tile { padding:16px; display:grid; gap:6px; align-content:start; }
+.tile .big { font-family:var(--f-display); font-size:34px; font-weight:700; line-height:1; letter-spacing:-.02em; }
+.tile p { font-size:14px; color:var(--soft); }
+.limits { border-left:3px solid var(--bad); padding:10px 16px; font-size:14.5px; color:var(--soft); max-width:820px; background:var(--panel); border-radius:0 10px 10px 0; }
+.limits b { color:var(--ink); }
+
+@media (max-width: 900px) {
+  .duo { grid-template-columns:minmax(0, 1fr); }
+  .readout { position:static; min-height:0; order:-1; }
+  .ctl-note { margin-left:0; width:100%; }
+}
+@media (max-width: 520px) {
+  .grid585 { grid-template-columns:repeat(27, 1fr); gap:1.5px; }
+  .st { padding-left:50px; } .loopbox { margin-left:0; } .loopwrap::before { display:none; }
+  .fn { grid-template-columns:72px 1fr; } .fn .n { font-size:20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation:none!important; transition:none!important; }
+}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">UTMT Local PDF Chatbot Competition · system architecture</div>
+  <h1>Local Agentic RAG</h1>
+  <p class="lede">Upload a long PDF, ask a question in any of 22 tested languages, and get an answer with page citations you can click. Every model runs on one T4 GPU. No outside AI service, no API key.</p>
+  <div class="facts">
+    <span><b>0</b> outside AI services</span><span><b>8.9 / 15 GB</b> GPU memory with all loaded</span>
+    <span><b>10,000</b> pages per PDF tested</span><span><b>2</b> LLM calls for the median question</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#system"><b>1</b>The whole system</a><a href="#reading"><b>2</b>Reading a PDF</a>
+    <a href="#answering"><b>3</b>Answering a question</a><a href="#models"><b>4</b>Model choices</a><a href="#results"><b>5</b>Measured results</a>
+  </nav>
+  <div class="legend" aria-label="Colour key">
+    <span><i class="l-you"></i>you and the browser</span><span><i class="l-sys"></i>server, library, disk</span>
+    <span><i class="l-cpu"></i>CPU work</span><span><i class="l-gpu"></i>GPU search model</span><span><i class="l-llm"></i>language model step</span>
+  </div>
+</header>
+
+<!-- 1 SYSTEM -->
+<section class="sec" id="system">
+  <div class="sec-head">
+    <div class="eyebrow"><b>1</b> · the whole system</div>
+    <h2>Six parts, one GPU</h2>
+    <p class="prose">The browser talks to one FastAPI server. Uploads go to a background queue that reads pages on the CPU and indexes them with BGE-M3 on the GPU. Questions go to the agent, which searches the index, reranks, and has Qwen2.5-7B write and check the answer. Watch a PDF go in, then a question.</p>
+  </div>
+  <div class="card map">
+    <div class="controls" role="group" aria-label="System animation">
+      <button class="btn" id="sysUp" aria-pressed="true">Upload a PDF</button>
+      <button class="btn" id="sysAsk" aria-pressed="false">Ask a question</button>
+      <button class="btn ghost" id="sysPause">Pause</button>
+      <span class="ctl-note">Click any step below to jump to it.</span>
+    </div>
+    <div class="svgbox">
+    <svg viewBox="0 0 1100 470" role="img" aria-labelledby="sysT">
+      <title id="sysT">System map: browser, FastAPI server, library, page readers, index on disk, agent, and a T4 GPU holding BGE-M3, the reranker and Qwen2.5-7B</title>
+      <!-- edges -->
+      <path id="eBS" class="ed" d="M170 235 H225"/>
+      <path id="eSL" class="ed" d="M400 205 H428 V85 H455"/>
+      <path id="eLI" class="ed" d="M630 85 H685"/>
+      <path id="eIG" class="ed" d="M865 75 H930"/>
+      <path id="eIS" class="ed" d="M775 140 V185"/>
+      <path id="eSA" class="ed" d="M400 265 H428 V385 H455"/>
+      <path id="eAS" class="ed" d="M630 355 H660 V235 H685"/>
+      <path id="eAG" class="ed" d="M630 405 H895 V105 H930"/>
+      <path id="eAR" class="ed" d="M630 405 H895 V190 H930"/>
+      <path id="eAQ" class="ed" d="M630 405 H895 V320 H930"/>
+      <!-- GPU frame -->
+      <rect class="frame" x="915" y="12" width="178" height="448" rx="14"/>
+      <text class="framelbl" x="930" y="34">ONE T4 GPU · 15 GB</text>
+      <!-- nodes -->
+      <g class="nd you" id="nB"><rect x="10" y="175" width="160" height="120" rx="12"/>
+        <text class="t1" x="26" y="205">Browser</text><text class="t2" x="26" y="228">web app</text>
+        <text class="t3" x="26" y="252">upload · chat</text><text class="t3" x="26" y="270">page viewer</text></g>
+      <g class="nd sys" id="nS"><rect x="225" y="175" width="175" height="120" rx="12"/>
+        <text class="t1" x="241" y="205">FastAPI server</text><text class="t2" x="241" y="228">access token</text>
+        <text class="t3" x="241" y="252">live progress stream</text><text class="t3" x="241" y="270">2 answers at a time</text></g>
+      <g class="nd sys" id="nL"><rect x="455" y="30" width="175" height="110" rx="12"/>
+        <text class="t1" x="471" y="60">Library</text><text class="t2" x="471" y="83">catalog of documents</text>
+        <text class="t3" x="471" y="107">background queue</text><text class="t3" x="471" y="125">resumes after restart</text></g>
+      <g class="nd cpu" id="nI"><rect x="685" y="30" width="180" height="110" rx="12"/>
+        <text class="t1" x="701" y="60">Read pages</text><text class="t2" x="701" y="83">PyMuPDF worker processes</text>
+        <text class="t3" x="701" y="107">tables rebuilt as rows</text><text class="t3" x="701" y="125">OCR: script per page</text></g>
+      <g class="nd sys" id="nD"><rect x="685" y="185" width="180" height="100" rx="12"/>
+        <text class="t1" x="701" y="214">Index on disk</text><text class="t2" x="701" y="237">passages · vectors · BM25</text>
+        <text class="t3" x="701" y="262">checkpoint every batch</text></g>
+      <g class="nd llm" id="nA"><rect x="455" y="330" width="175" height="110" rx="12"/>
+        <text class="t1" x="471" y="360">Agent</text><text class="t2" x="471" y="383">search · write · check</text>
+        <text class="t3" x="471" y="407">extra loop only when</text><text class="t3" x="471" y="425">the check fails</text></g>
+      <g class="nd gpu" id="nG"><rect x="930" y="48" width="150" height="85" rx="10"/>
+        <text class="t1" x="944" y="75">BGE-M3</text><text class="t2" x="944" y="96">meaning vectors</text><text class="t3" x="944" y="117">100+ languages</text></g>
+      <g class="nd gpu" id="nR"><rect x="930" y="148" width="150" height="85" rx="10"/>
+        <text class="t1" x="944" y="175" style="font-size:13.5px">bge-reranker-v2-m3</text><text class="t2" x="944" y="196">reads question +</text><text class="t2" x="944" y="214">passage together</text></g>
+      <g class="nd llm" id="nQ"><rect x="930" y="248" width="150" height="140" rx="10"/>
+        <text class="t1" x="944" y="276">Qwen2.5-7B</text><text class="t2" x="944" y="297">4-bit, via Ollama</text>
+        <text class="t3" x="944" y="322">writes the answer</text><text class="t3" x="944" y="340">checks each claim</text><text class="t3" x="944" y="358">plans, translates</text></g>
+      <rect class="bar-bg" x="930" y="410" width="150" height="12" rx="6"/>
+      <rect class="bar-fg" x="930" y="410" width="89" height="12" rx="6"/>
+      <text class="t3" x="930" y="442">8.9 of 15 GB in use</text>
+      <circle id="pkt" class="pkt upload" r="8" cx="-20" cy="-20"/>
+    </svg>
+    </div>
+    <ol class="hops" id="hops" aria-live="polite"></ol>
+  </div>
+</section>
+
+<!-- 2 READING -->
+<section class="sec" id="reading">
+  <div class="sec-head">
+    <div class="eyebrow"><b>2</b> · once per PDF</div>
+    <h2>Reading a PDF in two passes, with a save point after every batch</h2>
+    <p class="prose">A 10,000-page PDF cannot be held in memory, and a notebook can disconnect after an hour. So the PDF is streamed: pass 1 reads every page, pass 2 builds the index in page order. Each batch is written to disk before the checkpoint names it, so a crash loses at most one batch. The example is the real 9/11 Commission Report run.</p>
+  </div>
+  <div class="duo">
+    <ol class="stages">
+      <li class="st you"><span class="dot">1</span><div class="box"><span class="tag">BROWSER → SERVER</span><h3>Upload</h3><p>The file streams to disk. The server checks it really is a PDF and within the size limit, then puts it in the queue. You can keep asking about other documents.</p></div></li>
+      <li class="st cpu" id="iP1"><span class="dot">2</span><div class="box"><span class="tag">CPU · PASS 1 · 16-PAGE BATCHES</span><h3>Read every page</h3><p>Worker processes read pages in parallel: reading order across columns, tables rebuilt cell by cell, scanned pages run through Tesseract OCR with the pack chosen from each page's script. A page that crashes or hangs only kills its own worker; it becomes an empty page with a warning.</p></div></li>
+      <li class="st cpu"><span class="dot">3</span><div class="box"><span class="tag">CPU · WHILE PASS 1 STREAMS</span><h3>Count what repeats</h3><p>Lines that repeat in the margins of 40% of pages are running headers, so they are removed. The body font size tells headings apart from text. Both need the whole document, which is why there are two passes.</p></div></li>
+      <li class="st gpu" id="iP2"><span class="dot">4</span><div class="box"><span class="tag">GPU · PASS 2 · 48-PAGE BATCHES</span><h3>Cut passages and embed them</h3><p>Text is cut into passages of at most 320 tokens that never cross a page, so every passage has one page number to cite. BGE-M3 turns each one into a meaning vector, saved to disk as it is made.</p></div></li>
+      <li class="st sys" id="iFin"><span class="dot">5</span><div class="box"><span class="tag">FINAL STEP</span><h3>Keyword index</h3><p>A BM25 keyword index is built over all passages. The document can already be asked about from the first pass-2 checkpoint; answers say how many pages they came from.</p></div></li>
+    </ol>
+    <div class="card readout" id="ingCard">
+      <div class="rh"><span class="eyebrow"><b>Live</b> · 9/11 Commission Report</span><span class="calls">585 pages</span></div>
+      <div class="grid585" id="grid" aria-hidden="true"></div>
+      <div class="prog">
+        <div class="prow"><div class="pl"><span>Pass 1 · read (CPU)</span><b id="p1n">585 / 585</b></div><div class="ptrack p1"><span id="p1b" style="width:100%"></span></div></div>
+        <div class="prow"><div class="pl"><span>Pass 2 · index (GPU)</span><b id="p2n">585 / 585</b></div><div class="ptrack p2"><span id="p2b" style="width:100%"></span></div></div>
+      </div>
+      <div class="kv"><span>last checkpoint <b id="ckp">page 585</b></span><span>passages <b id="psg">2,126</b></span></div>
+      <p class="status" id="ingStatus" aria-live="polite">Done: 585 pages became 2,126 passages in 46 s on a T4.</p>
+      <span class="badge live" id="askable">Askable</span>
+      <div class="controls">
+        <button class="btn" id="ingReplay">Replay</button>
+        <button class="btn" id="ingCrash">Simulate a disconnect</button>
+      </div>
+      <p class="small">Sped up about 4×. Grey cells are pages in a batch that is not saved yet; a disconnect throws them away and the run resumes from the last checkpoint. At 10,000 pages the same flow took 37 min on a T4.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 ANSWERING -->
+<section class="sec" id="answering">
+  <div class="sec-head">
+    <div class="eyebrow"><b>3</b> · every question</div>
+    <h2>Find, write, check, cite</h2>
+    <p class="prose">The first scenario is a real question from the recorded demo. The second shows what the agent does when its own check fails. That loop costs extra language-model calls, so it runs only when needed.</p>
+  </div>
+  <div class="controls" role="group" aria-label="Question animation">
+    <button class="btn" id="scA" aria-pressed="true">Answer checks out</button>
+    <button class="btn" id="scB" aria-pressed="false">Check fails: agent loop</button>
+    <button class="btn ghost" id="askPrev" aria-label="Previous step">← Back</button>
+    <button class="btn ghost" id="askPlay">Pause</button>
+    <button class="btn ghost" id="askNext" aria-label="Next step">Next →</button>
+  </div>
+  <div class="duo">
+    <div>
+      <ol class="stages" id="askStages">
+        <li class="st you" data-id="q"><span class="dot">1</span><div class="box"><span class="tag">BROWSER · QUEUE</span><h3>A question arrives</h3><p>Up to two answers run at once. Anyone else waits in a first-come queue and sees their place in it.</p></div></li>
+        <li class="st llm" data-id="u"><span class="dot">2</span><div class="box"><span class="tag">0 TO 2 LLM CALLS · ONLY IF NEEDED</span><h3>Prepare the question</h3><p>Three checks before searching:</p>
+          <div class="chips"><span class="chip">follow-up → rewrite as a full question</span><span class="chip">other language → translate to the document's</span><span class="chip">names a page → pull that page in</span></div></div></li>
+        <li class="st gpu" data-id="s"><span class="dot">3</span><div class="box"><span class="tag">GPU + CPU · 0 LLM CALLS</span><h3>Search two ways</h3><p>Meaning search (BGE-M3, top 30) finds passages that say the same thing in other words. Keyword search (BM25, top 30) finds exact numbers, names and codes. Reciprocal rank fusion merges both lists by rank and keeps 24.</p></div></li>
+        <li class="st gpu" data-id="r"><span class="dot">4</span><div class="box"><span class="tag">GPU · 0 LLM CALLS</span><h3>Rerank</h3><p>bge-reranker-v2-m3 reads the question and each passage together, which is slower but much sharper than comparing vectors, and keeps the best 6.</p></div></li>
+        <li class="st cpu side" data-id="c"><span class="dot">+</span><div class="box"><span class="tag">ONLY FOR ARITHMETIC · 1 LLM CALL</span><h3>Calculator</h3><p>The model picks an operation (difference, sum, ratio, percent change, count…) and copies the numbers with their citations. Each number is checked against its cited row and column, then Python does the arithmetic.</p></div></li>
+        <li class="st llm" data-id="w"><span class="dot">5</span><div class="box"><span class="tag">QWEN2.5-7B · 1 LLM CALL · STREAMED</span><h3>Write the answer</h3><p>The model sees only the 6 numbered passages. It must cite every claim as [n], or reply that the document does not say. Words stream to the browser as they are written. Asked in another language? The answer is written in the book's language, checked, then translated (1 more LLM call).</p></div></li>
+        <li class="st llm" data-id="v"><span class="dot">6</span><div class="box"><span class="tag">QWEN2.5-7B · 1 LLM CALL · JSON</span><h3>Check every claim</h3><p>Is each sentence supported by the passages it cites? If yes, the answer is done.</p></div></li>
+      </ol>
+      <div class="loopwrap">
+        <div class="loopbox">
+          <div class="lbl">Only if the check fails or the draft refuses <span>· up to 4 more LLM calls</span></div>
+          <ol class="stages">
+            <li class="st llm" data-id="p"><span class="dot">a</span><div class="box"><span class="tag">1 LLM CALL · JSON</span><h3>Plan sub-questions</h3><p>One per item being compared, or per missing fact.</p></div></li>
+            <li class="st gpu" data-id="x"><span class="dot">b</span><div class="box"><span class="tag">0 LLM CALLS</span><h3>Search again</h3><p>Passages stay ranked by the original question; each sub-question only adds its best passage.</p></div></li>
+            <li class="st llm" data-id="g"><span class="dot">c</span><div class="box"><span class="tag">1 LLM CALL · JSON</span><h3>Grade the evidence</h3><p>A passage is dropped only if both the grader and the reranker reject it. The order is never changed.</p></div></li>
+            <li class="st llm" data-id="rw"><span class="dot">d</span><div class="box"><span class="tag">2 LLM CALLS</span><h3>Rewrite, then check again</h3><p>The rewrite is told which claims were unsupported.</p></div></li>
+          </ol>
+        </div>
+      </div>
+      <ol class="stages">
+        <li class="st you" data-id="a"><span class="dot">7</span><div class="box"><span class="tag">BROWSER</span><h3>Answer with clickable citations</h3><p>In your language, or the one picked in the Answer in menu. Each citation opens the source page with the passage highlighted; the sources list names each book. A trace lists every step the agent took.</p></div></li>
+      </ol>
+    </div>
+    <div class="card readout" id="askCard">
+      <div class="rh"><span class="eyebrow" id="askHead"><b>Step 1</b> · a question arrives</span><span class="calls">LLM calls <b id="callN">0</b></span></div>
+      <div id="askView"></div>
+    </div>
+  </div>
+  <div class="why"><b>Why the loop is not always on.</b> Running plan, search, grade, write and check on every question was measured: on the same 38 questions it got 23 right; a single pass got 27. Sub-question matches crowded out the passage that answered the real question. Now the loop only adds passages, never reorders them, and runs only after a failed check.</div>
+</section>
+
+<!-- 4 MODELS -->
+<section class="sec" id="models">
+  <div class="sec-head">
+    <div class="eyebrow"><b>4</b> · model choices</div>
+    <h2>Every model was chosen by measurement</h2>
+    <p class="prose">Run 8 swapped only the answer model and kept the retriever, reranker and prompts the same: 61 English questions (52 answerable, 9 with no answer in the document) and 20 multilingual questions, on a Kaggle T4.</p>
+  </div>
+  <div class="card tbl">
+    <table>
+      <thead><tr><th>Answer model</th><th>English answered</th><th>No-answer questions refused</th><th>Wrong refusals</th><th>Multilingual answered</th><th>Median time</th></tr></thead>
+      <tbody>
+        <tr class="pick"><td>Qwen2.5-7B<span class="pickt">CHOSEN</span></td><td class="num">44 / 52<span class="minibar" style="width:68px"></span></td><td class="num">9 / 9</td><td class="num">0 / 52</td><td class="num">17 / 18</td><td class="num">6.9 s</td></tr>
+        <tr><td>Llama-3.1-8B</td><td class="num">44 / 52<span class="minibar" style="width:68px"></span></td><td class="num">6 / 9</td><td class="num">0 / 52</td><td class="num">17 / 18</td><td class="num">15.0 s</td></tr>
+        <tr><td>Gemma-2-9B</td><td class="num">44 / 52<span class="minibar" style="width:68px"></span></td><td class="num">9 / 9</td><td class="num">1 / 52</td><td class="num">17 / 18</td><td class="num">10.7 s</td></tr>
+        <tr><td>Mistral-7B</td><td class="num">39 / 52<span class="minibar" style="width:60px"></span></td><td class="num">9 / 9</td><td class="num">3 / 52</td><td class="num">12 / 18</td><td class="num">9.8 s</td></tr>
+        <tr><td>Qwen2.5-3B</td><td class="num">29 / 52<span class="minibar" style="width:45px"></span></td><td class="num">8 / 9</td><td class="num">5 / 52</td><td class="num">11 / 18</td><td class="num">5.3 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">Qwen2.5-7B ties the larger models on accuracy, refuses every question the document cannot answer, and is the fastest of the accurate ones. Gemma-2-9B missed one of the two multilingual no-answer questions. On the 22-language set, Qwen3-8B (93 / 111) and Gemma-3-12B (101 / 111) answered more than Qwen2.5-7B (85 / 111) but refused fewer questions with no answer (8 / 11 and 6 / 11, against 9 / 11).</p>
+  <div class="choices">
+    <div class="card choice"><span class="eyebrow">Search</span><span class="big">94.2%</span><p>Right page in the top 5 with BGE-M3 + BM25 + reranker; a basic MiniLM search finds it 73.1% of the time. Five alternatives measured.</p></div>
+    <div class="card choice"><span class="eyebrow">Reranker</span><span class="big">1.00</span><p>Hindi/Marathi top-5 page recall with the multilingual bge-reranker-v2-m3 (0.94 with English-only models), English quality kept.</p></div>
+    <div class="card choice"><span class="eyebrow">OCR</span><span class="big">0.99</span><p>Hindi word recall with Tesseract at 300 dpi (0.70 with PyMuPDF's built-in text layer, which split words at vowel signs).</p></div>
+    <div class="card choice"><span class="eyebrow">Table detection on GPU</span><span class="big">1.89× faster</span><p>Same output as on the CPU. A faster line-only detector was rejected because it invented tables.</p></div>
+  </div>
+</section>
+
+<!-- 5 RESULTS -->
+<section class="sec" id="results">
+  <div class="sec-head">
+    <div class="eyebrow"><b>5</b> · measured results</div>
+    <h2>What it scores, and where it is still weak</h2>
+    <p class="prose">All numbers are from runs on Tesla T4 GPUs (Kaggle and Colab). The English set was used for tuning. The held-out documents were each used once and never tuned on.</p>
+  </div>
+  <div class="tiles">
+    <div class="card tile"><span class="big">44 / 52</span><p>answerable English questions right (84.6%, 95% CI 73.1–94.2). Tuning set.</p></div>
+    <div class="card tile"><span class="big">1 / 52</span><p>with the same model and no documents. The answers come from retrieval, not memory.</p></div>
+    <div class="card tile"><span class="big" style="font-size:26px">15/18 · 19/25 · 9/14</span><p>on documents never tuned on: GAO cost guide, US Code Title 21, a Hindi audit report.</p></div>
+    <div class="card tile"><span class="big">9 / 9</span><p>English questions with no answer in the document were refused, not made up.</p></div>
+    <div class="card tile"><span class="big">85 / 111</span><p>questions across 22 document languages and 24 question languages (Sanskrit, Bhojpuri, Urdu, Telugu, Chinese, ...); 33 / 44 and 18 / 20 on 16 unseen documents.</p></div>
+    <div class="card tile"><span class="big">0.5 s</span><p>median time to the first words of an answer; about 6.5 s to a checked answer.</p></div>
+    <div class="card tile"><span class="big">37 min</span><p>to process a 10,000-page, table-heavy PDF on a T4, with crash recovery at every size tested.</p></div>
+    <div class="card tile"><span class="big">8.9 GB</span><p>of the T4's 15 GB used with all models loaded. CPU-only also runs, via Docker, but slowly.</p></div>
+  </div>
+  <div class="limits"><b>Still weak.</b> Questions that combine facts from several pages: 5 of 9. A question in a different non-English language from the book: 12 of 21; one fact from each of two books: 1 of 6. Questions that assume something the document does not say: 6 of 9 refused on real documents. The number fixes were tuned on the English set and showed no gain on synthetic documents they were not tuned on.</div>
+</section>
+</div>
+
+<script>
+(() => {
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const visible = new Map();
+const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => visible.set(e.target.id, e.isIntersecting)), { threshold: 0.15 }) : null;
+const isVis = id => io ? visible.get(id) !== false : true;
+['system', 'reading', 'answering'].forEach(id => io && io.observe(document.getElementById(id)));
+
+/* ---------- 1. system map ---------- */
+const SYS = {
+  upload: [
+    { e: 'eBS', n: ['nB', 'nS'], t: 'You upload a PDF. It streams to the server, which checks it is a PDF and within the size limit.' },
+    { e: 'eSL', n: ['nS', 'nL'], t: 'The library records it and puts it in the background queue.' },
+    { e: 'eLI', n: ['nL', 'nI'], t: 'Worker processes read every page on the CPU; scanned pages go through OCR.' },
+    { e: 'eIG', n: ['nI', 'nG'], t: 'BGE-M3 on the GPU turns each passage into a meaning vector.' },
+    { e: 'eIS', n: ['nI', 'nD'], t: 'Passages, vectors and a checkpoint are saved to disk after every batch.' },
+    { e: 'eSL', n: ['nL', 'nS'], rev: true, t: 'Progress streams back. The document can be asked about after its first saved batch.' },
+    { e: 'eBS', n: ['nS', 'nB'], rev: true, t: 'The browser shows pages read and indexed, live.' },
+  ],
+  ask: [
+    { e: 'eBS', n: ['nB', 'nS'], t: 'You ask a question about the ticked documents.' },
+    { e: 'eSA', n: ['nS', 'nA'], t: 'It takes one of two answer slots; anyone else sees their place in the queue.' },
+    { e: 'eAG', n: ['nA', 'nG'], t: 'BGE-M3 turns the question into a meaning vector.' },
+    { e: 'eAS', n: ['nA', 'nD'], t: 'Meaning search and keyword search run over the index: 24 candidates.' },
+    { e: 'eAR', n: ['nA', 'nR'], t: 'The reranker reads question and passage together and keeps the best 6.' },
+    { e: 'eAQ', n: ['nA', 'nQ'], t: 'Qwen2.5-7B writes the answer from those 6 passages, then checks each claim.' },
+    { e: 'eSA', n: ['nA', 'nS'], rev: true, t: 'The answer streams back word by word, with citations.' },
+    { e: 'eBS', n: ['nS', 'nB'], rev: true, t: 'Click a citation: the page opens with the passage highlighted.' },
+  ],
+};
+let sysMode = 'upload', sysIdx = 0, sysPaused = reduce, sysAuto = true, sysRAF = 0;
+const pkt = $('#pkt'), hopsEl = $('#hops');
+function sysList() {
+  hopsEl.innerHTML = '';
+  SYS[sysMode].forEach((h, i) => {
+    const li = document.createElement('li'); li.textContent = h.t; li.tabIndex = 0;
+    const go = () => { sysAuto = false; sysIdx = i; sysHop(); };
+    li.addEventListener('click', go); li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    hopsEl.appendChild(li);
+  });
+  $('#sysUp').setAttribute('aria-pressed', sysMode === 'upload'); $('#sysAsk').setAttribute('aria-pressed', sysMode === 'ask');
+  pkt.setAttribute('class', 'pkt ' + sysMode);
+}
+function sysMark(h) {
+  $$('#system .ed, #system .nd').forEach(x => x.classList.remove('on'));
+  document.getElementById(h.e).classList.add('on'); h.n.forEach(id => document.getElementById(id).classList.add('on'));
+  $$('li', hopsEl).forEach((li, i) => li.classList.toggle('on', i === sysIdx));
+}
+function sysHop() {
+  cancelAnimationFrame(sysRAF);
+  const h = SYS[sysMode][sysIdx]; sysMark(h);
+  const path = document.getElementById(h.e), L = path.getTotalLength();
+  const place = f => { const p = path.getPointAtLength((h.rev ? 1 - f : f) * L); pkt.setAttribute('cx', p.x); pkt.setAttribute('cy', p.y); };
+  if (reduce) { place(1); return; }
+  const dur = Math.min(1700, 650 + L * 3.2), dwell = 1300;
+  let el = 0, last = performance.now();
+  const tick = now => {
+    const dt = Math.min(64, now - last); last = now;
+    if (!sysPaused && isVis('system')) el += dt;
+    const f = Math.min(1, el / dur); place(f < .5 ? 2 * f * f : 1 - Math.pow(-2 * f + 2, 2) / 2);
+    if (el < dur + dwell) { sysRAF = requestAnimationFrame(tick); return; }
+    sysIdx++;
+    if (sysIdx >= SYS[sysMode].length) { sysIdx = 0; if (sysAuto) sysMode = sysMode === 'upload' ? 'ask' : 'upload'; sysList(); }
+    sysHop();
+  };
+  sysRAF = requestAnimationFrame(tick);
+}
+$('#sysUp').onclick = () => { sysAuto = false; sysMode = 'upload'; sysIdx = 0; sysList(); sysHop(); };
+$('#sysAsk').onclick = () => { sysAuto = false; sysMode = 'ask'; sysIdx = 0; sysList(); sysHop(); };
+const sysPB = $('#sysPause');
+sysPB.textContent = sysPaused ? 'Play' : 'Pause';
+sysPB.onclick = () => { sysPaused = !sysPaused; sysPB.textContent = sysPaused ? 'Play' : 'Pause'; };
+if (reduce) sysPB.hidden = true;
+sysList(); sysHop();
+
+/* ---------- 2. ingestion ---------- */
+const N = 585, B1 = 16, B2 = 48, PASSAGES = 2126;
+const grid = $('#grid'), cells = [];
+for (let i = 0; i < N; i++) { const d = document.createElement('div'); d.className = 'ix'; grid.appendChild(d); cells.push(d); }
+const prev = new Array(N).fill('ix');
+const ing = { phase: 'done', p1: N, p2: N, hold: 0, crashAt: null, frozen: 0 };
+const fmt = n => n.toLocaleString('en-US');
+const ck = (p, b) => p >= N ? N : Math.floor(p / b) * b;
+function ingRender() {
+  const c1 = ck(ing.p1, B1), c2 = ck(ing.p2, B2);
+  for (let i = 0; i < N; i++) {
+    let c = '';
+    if (i < c2) c = 'ix'; else if (ing.phase === 'p2' && i < ing.p2) c = 'fl';
+    else if (i < c1) c = 'rd'; else if (ing.phase === 'p1' && i < ing.p1) c = 'fl';
+    if (c !== prev[i]) { cells[i].className = c; prev[i] = c; }
+  }
+  const p1 = Math.floor(ing.p1), p2 = Math.floor(ing.p2);
+  $('#p1n').textContent = `${fmt(p1)} / ${N}`; $('#p2n').textContent = `${fmt(p2)} / ${N}`;
+  $('#p1b').style.width = (100 * ing.p1 / N) + '%'; $('#p2b').style.width = (100 * ing.p2 / N) + '%';
+  const last = ing.phase === 'p1' ? c1 : c2;
+  $('#ckp').textContent = ing.phase === 'p1' ? `pass 1, page ${fmt(c1)}` : `page ${fmt(last)}`;
+  $('#psg').textContent = ing.phase === 'done' ? fmt(PASSAGES) : (c2 ? '~' + fmt(Math.round(PASSAGES * c2 / N)) : '0');
+  const live = c2 > 0;
+  const a = $('#askable'); a.classList.toggle('live', live);
+  a.textContent = !live ? 'Not askable yet' : (ing.phase === 'done' ? 'Askable' : `Askable now: answers say "from the first ${fmt(c2)} of 585 pages"`);
+  $('#iP1').classList.toggle('on', ing.phase === 'p1'); $('#iP2').classList.toggle('on', ing.phase === 'p2');
+  $('#iFin').classList.toggle('on', ing.phase === 'final');
+}
+function ingStatus(t, bad) { const s = $('#ingStatus'); s.textContent = t; s.classList.toggle('bad', !!bad); }
+function ingStart(crashAt) { Object.assign(ing, { phase: 'p1', p1: 0, p2: 0, hold: 0, crashAt: crashAt ?? null, frozen: 0 }); ingStatus('Pass 1: worker processes read pages on the CPU, 16 at a time.'); ingRender(); }
+function ingCrash() {
+  const card = $('#ingCard'); card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+  const key = ing.phase === 'p1' ? 'p1' : 'p2', b = key === 'p1' ? B1 : B2;
+  const at = Math.floor(ing[key]), back = ck(ing[key], b);
+  ing[key] = back; ing.frozen = 1700; ing.crashAt = null;
+  ingStatus(`Disconnected at page ${fmt(at)}. On restart the files are cut back to the checkpoint at page ${fmt(back)}; the half-written batch is thrown away.`, true);
+  ing.resumeMsg = `Resumed from page ${fmt(back)}. Nothing before the checkpoint is redone.`;
+  ingRender();
+}
+let ingLast = performance.now();
+function ingTick(now) {
+  const dt = Math.min(64, now - ingLast); ingLast = now;
+  if (!reduce && isVis('reading')) {
+    if (ing.frozen > 0) { ing.frozen -= dt; if (ing.frozen <= 0) ingStatus(ing.resumeMsg); }
+    else if (ing.phase === 'p1') {
+      ing.p1 = Math.min(N, ing.p1 + dt * 0.12);
+      if (ing.p1 >= N) { ing.phase = 'p2'; ingStatus('Pass 2: passages cut and embedded on the GPU, 48 pages at a time, in page order.'); }
+    } else if (ing.phase === 'p2') {
+      ing.p2 = Math.min(N, ing.p2 + dt * 0.085);
+      if (ing.crashAt && ing.p2 >= ing.crashAt) ingCrash();
+      else if (ing.p2 >= N) { ing.phase = 'final'; ing.hold = 900; ingStatus('Building the BM25 keyword index over all passages.'); }
+    } else if (ing.phase === 'final') {
+      ing.hold -= dt; if (ing.hold <= 0) { ing.phase = 'done'; ing.hold = 5000; ingStatus('Done: 585 pages became 2,126 passages in 46 s on a T4.'); }
+    } else if (ing.phase === 'done' && ing.autoloop) {
+      ing.hold -= dt; if (ing.hold <= 0) ingStart();
+    }
+    ingRender();
+  }
+  requestAnimationFrame(ingTick);
+}
+$('#ingReplay').onclick = () => { ing.autoloop = true; ingStart(); };
+$('#ingCrash').onclick = () => { ing.autoloop = true; if (ing.phase === 'p1' || ing.phase === 'p2') { if (ing.frozen <= 0) ingCrash(); } else ingStart(330); };
+if (reduce) { $('#ingReplay').hidden = true; $('#ingCrash').hidden = true; }
+else {
+  ing.autoloop = true;
+  const startOnce = () => { if (isVis('reading') && !ing.started) { ing.started = true; ingStart(330); } };
+  if (io) new IntersectionObserver(es => es.forEach(e => e.isIntersecting && startOnce()), { threshold: 0.3 }).observe($('#reading'));
+  else startOnce();
+  requestAnimationFrame(ingTick);
+}
+ingRender();
+
+/* ---------- 3. answering ---------- */
+const Q = 'How many crew members were killed in the USS Cole attack?';
+const QUOTE = 'The blast ripped a hole in the side of the Cole, killing 17…';
+const doc = `<div class="doc"><span class="tick">✓</span>9/11 Commission Report · 585 pages · 2,126 passages</div>`;
+const psgRows = hit => [1, 2, 3, 4, 5, 6].map((n, i) => {
+  const lab = n === 1 ? 'page 208' : n === 4 ? 'page 209' : 'other passage';
+  const h = (n === 1 || n === 4) && hit;
+  return `<div class="${h ? 'hit' : ''}"><span class="nm">[${n}]</span><span class="b" style="width:${100 - i * 11}%">${lab}</span></div>`;
+}).join('');
+const A = [
+  { id: 'q', h: 'a question arrives', c: 0, d: 3200, v: () => `<div class="pv"><div class="bubble">${Q}</div>${doc}<p class="note">Asked in the web app on a Colab T4. Up to two answers run at once; others see their place in the queue.</p></div>` },
+  { id: 'u', h: 'prepare the question', c: 0, d: 3600, v: () => `<div class="pv"><div class="checks">
+      <div><span>Follow-up to an earlier question?</span><span>rewrite it as a full question</span></div>
+      <div><span>Different language from the document?</span><span>translate it, 1 LLM call</span></div>
+      <div><span>Names a page, like "page 208"?</span><span>pull that page's passages in</span></div></div>
+      <p class="note">Here: an English question about an English document, and no page named. No translation, no page lookup.</p></div>` },
+  { id: 's', h: 'search two ways', c: 0, d: 4200, v: () => `<div class="pv"><div class="funnel">
+      <div class="fn"><span class="n">2,126</span><div><div class="w">passages in the index</div><div class="bar" style="width:100%;background:var(--rule)"></div></div></div>
+      <div class="fn"><span class="n">30+30</span><div><div class="w">by meaning (BGE-M3) and by keywords (BM25)</div><div class="bar" style="width:62%;background:var(--gpu)"></div></div></div>
+      <div class="fn"><span class="n">24</span><div><div class="w">kept after merging the two rankings (RRF)</div><div class="bar" style="width:36%;background:var(--gpu)"></div></div></div></div>
+      <p class="note">Meaning search finds passages worded differently from the question; keyword search finds the exact name "Cole".</p></div>`, after: el => $$('.fn', el).forEach((f, i) => setTimeout(() => f.classList.add('in'), reduce ? 0 : 250 + i * 650)) },
+  { id: 'r', h: 'rerank', c: 0, d: 4000, v: () => `<div class="pv"><p class="note">The reranker orders the 24 candidates and keeps 6, numbered for the writer.</p><div class="psg">${psgRows(true)}</div><div class="quote">Page 208: "${QUOTE}"</div></div>` },
+  { id: 'w', h: 'write the answer', c: 1, d: 3800, v: () => `<div class="pv"><div class="stream"><span id="typed"></span><span class="cur"></span></div>
+      <ul class="rules"><li>sees only the 6 numbered passages</li><li>every claim cites a passage as [n]</li><li>nothing relevant → "the document does not say"</li></ul>
+      <p class="small">First words reach the browser after 0.5 s (median).</p></div>`, after: el => typeText($('#typed', el), '17 [1] [4]') },
+  { id: 'v', h: 'check every claim', c: 2, d: 3600, v: () => `<div class="pv"><div class="claim"><span>"17 crew members were killed"</span><span class="v ok">✓ supported</span><span class="small">cites <span class="cite">[1] p.208</span> <span class="cite">[4] p.209</span></span></div>
+      <p class="note">Supported, so the agent stops here. No extra loop.</p></div>` },
+  { id: 'a', h: 'answer with citations', c: 2, d: 6000, v: () => `<div class="pv"><div class="answer"><b>17</b><span class="cite">[1] p.208</span><span class="cite">[4] p.209</span><span class="vf">✓ Verified</span></div>
+      <div class="page"><span class="pn">page 208</span><i style="width:92%"></i><i style="width:86%"></i><mark>${QUOTE}</mark><i style="width:95%"></i><i style="width:70%"></i></div>
+      <p class="note">Clicking [1] opens page 208 with the passage highlighted. Two LLM calls in total, the median for our questions.</p></div>` },
+];
+const Bsc = [
+  { id: 'w', h: 'write a draft', c: 1, d: 3200, v: () => `<div class="pv"><p class="note">Illustration of the loop, not one specific question. The first steps (search, rerank) ran as before.</p><div class="stream">Claim A [2]. Claim B [5].</div></div>` },
+  { id: 'v', h: 'the check fails', c: 2, d: 3600, v: () => `<div class="pv"><div class="claim"><span>Claim A</span><span class="v ok">✓ supported</span></div><div class="claim"><span>Claim B</span><span class="v bad">✗ not in passage [5]</span></div>
+      <p class="note">An unsupported claim, or a draft that says "not in the document", starts the loop.</p></div>` },
+  { id: 'p', h: 'plan sub-questions', c: 3, d: 3400, v: () => `<div class="pv"><div class="checks"><div><span>Sub-question 1</span><span>the missing fact</span></div><div><span>Sub-question 2</span><span>the other item compared</span></div></div><p class="note">One LLM call returns them as JSON.</p></div>` },
+  { id: 'x', h: 'search again', c: 3, d: 3400, v: () => `<div class="pv"><div class="psg">${psgRows(false)}<div class="hit"><span class="nm">+1</span><span class="b" style="width:60%">best passage for sub-question 1</span></div><div class="hit"><span class="nm">+2</span><span class="b" style="width:55%">best passage for sub-question 2</span></div></div><p class="note">The original 6 keep their order; sub-questions only add.</p></div>` },
+  { id: 'g', h: 'grade the evidence', c: 4, d: 3400, v: () => `<div class="pv"><p class="note">A passage is dropped only when the grader and the reranker both reject it. The order is not changed.</p><div class="psg">${psgRows(false)}</div></div>` },
+  { id: 'rw', h: 'rewrite, check again', c: 6, d: 3800, v: () => `<div class="pv"><div class="stream">Claim A [2]. Claim B [7].</div><div class="claim"><span>Claim B</span><span class="v ok">✓ supported by [7]</span></div><p class="note">The rewrite is told which claims failed (1 call), then checked again (1 call).</p></div>` },
+  { id: 'a', h: 'answer, or keep the first', c: 6, d: 5500, v: () => `<div class="pv"><div class="answer">Claim A <span class="cite">[2]</span> Claim B <span class="cite">[7]</span><span class="vf">✓ Verified</span></div>
+      <p class="note">If the loop only produces a refusal, the first answer is kept and marked as not verified. The most LLM calls any test question used was 9, a numeric question that also used the calculator.</p></div>` },
+];
+let scen = 'a', ai = 0, aPaused = reduce, aTimer = 0, aStart = 0, aLeft = 0, aUser = false, typer = 0;
+const seq = () => scen === 'a' ? A : Bsc;
+function typeText(el, s) {
+  clearInterval(typer); if (!el) return;
+  if (reduce) { el.textContent = s; return; }
+  let i = 0; el.textContent = '';
+  typer = setInterval(() => { el.textContent = s.slice(0, ++i); if (i >= s.length) clearInterval(typer); }, 180);
+}
+function aShow() {
+  const s = seq()[ai];
+  $$('#answering .st').forEach(x => { const on = x.dataset.id === s.id; x.classList.toggle('on', on); on ? x.setAttribute('aria-current', 'step') : x.removeAttribute('aria-current'); });
+  $('#askHead').innerHTML = `<b>Step ${ai + 1} of ${seq().length}</b> · ${s.h}`;
+  $('#callN').textContent = s.c;
+  const v = $('#askView'); v.innerHTML = s.v(); s.after && s.after(v);
+  $('#scA').setAttribute('aria-pressed', scen === 'a'); $('#scB').setAttribute('aria-pressed', scen === 'b');
+  aSchedule(s.d);
+}
+function aSchedule(ms) {
+  clearTimeout(aTimer); aLeft = ms; aStart = performance.now();
+  if (!aPaused) aTimer = setTimeout(aAdvance, ms);
+}
+function aAdvance() {
+  if (!isVis('answering')) { aSchedule(800); return; }
+  ai++;
+  if (ai >= seq().length) { ai = 0; if (!aUser) scen = scen === 'a' ? 'b' : 'a'; }
+  aShow();
+}
+const playB = $('#askPlay');
+playB.textContent = aPaused ? 'Play' : 'Pause';
+playB.onclick = () => {
+  aPaused = !aPaused; playB.textContent = aPaused ? 'Play' : 'Pause';
+  if (aPaused) { clearTimeout(aTimer); aLeft = Math.max(400, aLeft - (performance.now() - aStart)); }
+  else aSchedule(aLeft || 1200);
+};
+$('#askNext').onclick = () => { aUser = true; ai = (ai + 1) % seq().length; aShow(); };
+$('#askPrev').onclick = () => { aUser = true; ai = (ai - 1 + seq().length) % seq().length; aShow(); };
+$('#scA').onclick = () => { aUser = true; scen = 'a'; ai = 0; aShow(); };
+$('#scB').onclick = () => { aUser = true; scen = 'b'; ai = 0; aShow(); };
+$$('#answering .st').forEach(li => {
+  li.style.cursor = 'pointer';
+  li.addEventListener('click', () => { const k = seq().findIndex(s => s.id === li.dataset.id); if (k >= 0) { aUser = true; ai = k; aShow(); } });
+});
+aShow();
+})();
+</script>
