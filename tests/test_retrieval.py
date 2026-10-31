@@ -531,3 +531,40 @@ def test_inline_section_starts_and_year_headings():
     assert index.section_chunks("164") == [0, 1, 2, 3]
     assert index.section_chunks("163") == [0]
     assert index.section_chunks("221") == [] and index.section_chunks("2010") == []
+
+
+def test_second_document_gets_a_slot_when_clearly_relevant():
+    # Book A fills the top 3 by score; book B's best passage (0.6) still gets a slot.
+    a = _stub({"q": [0, 1, 2, 3]}, {}, doc_id="a")
+    b = _stub({"q": [0, 1]}, {}, doc_id="b")
+    reranker = TableReranker(
+        {
+            ("q", "a text 0"): 0.95,
+            ("q", "a text 1"): 0.9,
+            ("q", "a text 2"): 0.85,
+            ("q", "a text 3"): 0.8,
+            ("q", "b text 0"): 0.6,
+            ("q", "b text 1"): 0.1,
+        }
+    )
+    out = HybridRetriever(_cfg(retrieval_mode="dense", top_k=3), _emb(a, b), reranker).retrieve(
+        ["q"], [a, b]
+    )
+    assert [sc.chunk.chunk_id for sc in out] == ["a-c0", "a-c1", "b-c0"]
+
+
+def test_weak_second_document_does_not_displace_passages():
+    a = _stub({"q": [0, 1, 2]}, {}, doc_id="a")
+    b = _stub({"q": [0]}, {}, doc_id="b")
+    reranker = TableReranker(
+        {
+            ("q", "a text 0"): 0.9,
+            ("q", "a text 1"): 0.8,
+            ("q", "a text 2"): 0.7,
+            ("q", "b text 0"): 0.2,
+        }
+    )
+    out = HybridRetriever(_cfg(retrieval_mode="dense", top_k=3), _emb(a, b), reranker).retrieve(
+        ["q"], [a, b]
+    )
+    assert [sc.chunk.chunk_id for sc in out] == ["a-c0", "a-c1", "a-c2"]

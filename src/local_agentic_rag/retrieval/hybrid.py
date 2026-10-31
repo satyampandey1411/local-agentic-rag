@@ -236,7 +236,43 @@ class HybridRetriever:
         taken = pinned + extras
         primaries = [sc for sc in ranked if sc not in taken][: max(top_k - len(taken), 0)]
         chosen = {id(sc) for sc in primaries} | {id(sc) for sc in extras}
-        return pinned + [sc for sc in ranked if id(sc) in chosen]
+        return self._make_room_for_other_documents(
+            pinned + [sc for sc in ranked if id(sc) in chosen], ranked, pinned
+        )
+
+    def _make_room_for_other_documents(
+        self, chosen: list[ScoredChunk], ranked: list[ScoredChunk], pinned: list[ScoredChunk]
+    ) -> list[ScoredChunk]:
+        """With several documents searched, a document whose best passage is clearly
+        relevant gets one slot even if a single other document filled the top k.
+
+        A question that needs one fact from each of two books lost the second book's
+        passage to more passages from the first (22-language benchmark, two-book questions
+        1/6).  The weakest passage of a document that already has several is replaced.  One
+        document searched (every English benchmark): no change.
+        """
+        present = {sc.chunk.doc_id for sc in chosen}
+        candidates: list[ScoredChunk] = []
+        for sc in ranked:  # best first
+            if sc.chunk.doc_id in present or (sc.rerank_score or 0.0) < self.OTHER_DOC_MIN_SCORE:
+                continue
+            candidates.append(sc)
+            present.add(sc.chunk.doc_id)
+            if len(candidates) >= self.MAX_OTHER_DOCS:
+                break
+        if not candidates:
+            return chosen
+        keep = list(chosen)
+        protected = {id(sc) for sc in pinned}
+        for extra in candidates:
+            for i in range(len(keep) - 1, -1, -1):  # weakest first
+                victim = keep[i]
+                same_doc = sum(1 for k in keep if k.chunk.doc_id == victim.chunk.doc_id)
+                if id(victim) not in protected and same_doc > 1:
+                    keep.pop(i)
+                    keep.append(extra)
+                    break
+        return keep
 
     #: Passages kept from a page or section the question names ("page 64", "section 7203").
     MAX_PINNED = 3
@@ -245,3 +281,7 @@ class HybridRetriever:
 
     #: A sub-query's best passage must clear this reranker probability to claim a slot.
     SUBQUERY_MIN_SCORE = 0.3
+    #: Another document's best passage must clear this reranker probability to claim a slot.
+    OTHER_DOC_MIN_SCORE = 0.3
+    #: Most documents that can claim a slot that way.
+    MAX_OTHER_DOCS = 2
