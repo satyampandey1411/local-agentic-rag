@@ -3,6 +3,9 @@
 
     .venv/bin/python benchmark/languages/validate.py            # dev set
     .venv/bin/python benchmark/languages/validate.py --heldout  # sealed held-out set
+    .venv/bin/python benchmark/languages/validate.py --set more       # questions_more.jsonl on the dev docs
+    .venv/bin/python benchmark/languages/validate.py --set heldout2   # second sealed held-out set
+    .venv/bin/python benchmark/languages/validate.py --set special    # mixed-language doc (+ Chromium Arabic)
 
 Checks
   1. documents.json / questions.jsonl schema, languages and combo rules
@@ -19,6 +22,9 @@ Checks
      word ("तेन्जि ङ", "2012 年2 月"), so a second pass compares with all whitespace removed and
      reports a warning.
   6. two-books questions: at least two evidence docs in different languages, each holding a fact.
+  7. (more/heldout2/special) ``romanized``: a Latin-script question (hinglish, roman-ur, roman-ta,
+     roman-bn) on a document in another script; ``mixed``: a question on the Hindi-English document.
+     ``--set more`` also refuses q_ids that are already in questions.jsonl.
 
 Exit 0 only when there are no errors. Warnings do not fail the run.
 """
@@ -42,10 +48,17 @@ from make_pdfs import ROUNDTRIP_MIN, roundtrip_score  # noqa: E402
 from local_agentic_rag.eval.metrics import alias_matches, normalize_text  # noqa: E402
 
 DOC_LANGS = {"hi", "mr", "sa", "ne", "bh", "awa", "mai", "ur", "bn", "te", "ta", "kn", "ml", "gu",
-             "pa", "or", "en", "fr", "ar", "zh", "ja", "ru"}
-Q_LANGS = DOC_LANGS | {"hinglish", "roman-ur"}
-SAME_SCRIPT = {"hinglish": "hi", "roman-ur": "ur"}
-FIXED_COMBOS = {"same", "cross", "unanswerable", "answer-in", "library", "two-books", "scanned"}
+             "pa", "or", "en", "fr", "ar", "zh", "ja", "ru", "hi-en"}
+ROMANIZED = {"hinglish", "roman-ur", "roman-ta", "roman-bn"}
+Q_LANGS = (DOC_LANGS - {"hi-en"}) | ROMANIZED
+SAME_SCRIPT = {"hinglish": "hi", "roman-ur": "ur", "roman-ta": "ta", "roman-bn": "bn"}
+# writing system of a language (Devanagari and Perso-Arabic are shared by several languages)
+SCRIPT = {**dict.fromkeys(("hi", "mr", "sa", "ne", "bh", "awa", "mai", "hi-en"), "deva"), "ur": "arab", "ar": "arab"}
+FIXED_COMBOS = {"same", "cross", "unanswerable", "answer-in", "library", "two-books", "scanned", "romanized", "mixed"}
+# set -> (directory, questions file)
+SETS = {"dev": (".", "questions.jsonl"), "heldout": ("heldout", "questions.jsonl"),
+        "more": (".", "questions_more.jsonl"), "heldout2": ("heldout2", "questions.jsonl"),
+        "special": ("special", "questions.jsonl")}
 CATEGORIES = {"factual", "table", "numerical", "multi_hop", "comparison", "definition", "unanswerable"}
 DOC_KEYS = {"doc_id", "title", "url", "sha256", "num_pages", "doc_type", "source_license_note", "language"}
 Q_KEYS = {"q_id", "doc_id", "category", "question", "answerable", "reference_answer", "required_facts",
@@ -89,7 +102,7 @@ def check_docs(base: Path, docs: list[dict], errors: list[str]) -> tuple[dict, d
         src_text = (base / d["source_text"]).read_text(encoding="utf-8")
         # share of the source characters recovered; extra PDF text (title, footer) does not count
         score = roundtrip_score(src_text, "".join(raw))
-        ok = score >= ROUNDTRIP_MIN
+        ok = score >= d.get("roundtrip_min", ROUNDTRIP_MIN)
         d["_roundtrip"] = (score, ok)
         if ok != d.get("roundtrip_ok"):
             errors.append(f"{doc_id}: round-trip {score:.3f} disagrees with manifest roundtrip_ok={d.get('roundtrip_ok')}")
@@ -105,17 +118,26 @@ def text_doc(by_id: dict, doc_id: str) -> tuple[str, list[int]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--heldout", action="store_true", help="validate heldout/ instead of the dev set")
+    ap.add_argument("--heldout", action="store_true", help="validate heldout/ instead of the dev set (= --set heldout)")
+    ap.add_argument("--set", choices=sorted(SETS), default="dev", help="which set to validate (default: dev)")
     args = ap.parse_args()
-    base = HERE / "heldout" if args.heldout else HERE
+    which = "heldout" if args.heldout else args.set
+    sub, qfile = SETS[which]
+    base = HERE / sub if sub != "." else HERE
     errors: list[str] = []
     warnings: list[str] = []
     docs = json.loads((base / "documents.json").read_text(encoding="utf-8"))
     by_id, pages = check_docs(base, docs, errors)
     library = sorted(d for d in by_id if "derived_from" not in by_id[d])
 
-    qs = [json.loads(line) for line in (base / "questions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    qs = [json.loads(line) for line in (base / qfile).read_text(encoding="utf-8").splitlines() if line.strip()]
     seen: set[str] = set()
+    if which == "more":   # the extra questions must not reuse an id (or a question) of the published set
+        dev = [json.loads(line) for line in (HERE / "questions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        dev_ids, dev_q = {q["q_id"] for q in dev}, {q["question"] for q in dev}
+        for q in qs:
+            if q.get("q_id") in dev_ids or q.get("question") in dev_q:
+                errors.append(f"{q.get('q_id')}: q_id or question already in questions.jsonl")
     checked = 0
     for q in qs:
         qid = q.get("q_id", "?")
@@ -165,6 +187,11 @@ def main() -> int:
                 errors.append(f"{qid}: {combo} question in {ql} on a {dlang} doc")
             if combo == "cross" and (ql == "en" or SAME_SCRIPT.get(ql, ql) == dlang):
                 errors.append(f"{qid}: cross question must be in another non-English language")
+            if combo == "romanized" and (ql not in ROMANIZED or SCRIPT.get(SAME_SCRIPT[ql], SAME_SCRIPT[ql])
+                                         == SCRIPT.get(dlang, dlang)):
+                errors.append(f"{qid}: romanized question must be romanized and on a doc in another script")
+            if combo == "mixed" and (dlang != "hi-en" or ql not in {"en", "hi", "hinglish"}):
+                errors.append(f"{qid}: mixed question must be en/hi/hinglish on the hi-en document")
         # unanswerable
         if not q["answerable"]:
             if q["required_facts"] or q["evidence"] or q["evidence_pages"]:
@@ -214,10 +241,10 @@ def main() -> int:
                 errors.append(f"{qid}: two-books needs >=2 docs in different languages, each holding a fact")
         checked += 1
 
-    print(f"set: {'heldout' if args.heldout else 'dev'}  documents: {len(docs)} "
+    print(f"set: {which}  documents: {len(docs)} "
           f"(library of {len(library)} text docs)  questions: {len(qs)}  answerable fact-checked: {checked}")
     rt = {d: round(v["_roundtrip"][0], 3) for d, v in by_id.items() if "_roundtrip" in v}
-    print("round-trip below threshold:", {d: s for d, s in rt.items() if s < ROUNDTRIP_MIN} or "none")
+    print("round-trip below threshold:", {d: s for d, s in rt.items() if not by_id[d]["_roundtrip"][1]} or "none")
     print("by combo:", dict(sorted(Counter(q.get("combo") for q in qs).items())))
     print("by question_language:", dict(sorted(Counter(q.get("question_language") for q in qs).items())))
     print("by answer_language:", dict(sorted(Counter(q.get("answer_language") for q in qs).items())))

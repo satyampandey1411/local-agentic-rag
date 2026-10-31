@@ -1,0 +1,15 @@
+SEALED second held-out set - run exactly once, at the very end. Do not read questions.jsonl or specs.py before that.
+
+file:    benchmark/languages/heldout2/questions.jsonl
+lines:   48 questions (10 docs x 3 [same, English, cross] + 4 answer-in + 4 two-books + 4 scanned + 2 romanized + 4 unanswerable)
+sha256:  70b7bc6dd34bd4afd5ffc8589799b62e23bc080855387831f8873ffd9a6e1c50
+specs:   benchmark/languages/heldout2/specs.py  sha256 66fb146def8165089fa5b50c4bf4879b95235870c801c1d7d1958c71d83ea1ec  (the source of questions.jsonl; equally sealed)
+sealed:  2026-10-31 16:50:59 IST
+
+Documents (10 text + 4 image-only): hi-tajmahal, mr-shaniwarwada, ne-pashupatinath, awa-lucknow, mai-janakpur,
+bn-victoriamemorial, kn-jogfalls, ml-idukkidam, or-chilika, ja-himejicastle; scanned copies of hi, bn, kn, ja.
+
+Verify before the run:  sha256sum benchmark/languages/heldout2/questions.jsonl
+Build and check:        .venv/bin/python benchmark/languages/make_pdfs.py --set heldout2
+                        .venv/bin/python benchmark/languages/validate.py --set heldout2
+If the hash differs, the set was changed after sealing and the run is not a clean held-out result.

@@ -1,0 +1,122 @@
+[
+ {
+  "doc_id": "awa-lucknow",
+  "lang": "awa",
+  "wiki": "awa.wikipedia.org",
+  "article_title": "लखनऊ",
+  "topic_en": "Lucknow",
+  "page_id": 5394,
+  "rev_id": 34864,
+  "rev_timestamp": "2026-04-06T12:07:55Z",
+  "source_text": "sources/awa-lucknow.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "bn-victoriamemorial",
+  "lang": "bn",
+  "wiki": "bn.wikipedia.org",
+  "article_title": "ভিক্টোরিয়া মেমোরিয়াল হল",
+  "topic_en": "Victoria Memorial",
+  "page_id": 70291,
+  "rev_id": 8232525,
+  "rev_timestamp": "2025-06-12T13:48:56Z",
+  "source_text": "sources/bn-victoriamemorial.txt",
+  "scanned_copy": true
+ },
+ {
+  "doc_id": "hi-tajmahal",
+  "lang": "hi",
+  "wiki": "hi.wikipedia.org",
+  "article_title": "ताजमहल",
+  "topic_en": "Taj Mahal",
+  "page_id": 5804,
+  "rev_id": 6620327,
+  "rev_timestamp": "2026-09-26T17:18:35Z",
+  "source_text": "sources/hi-tajmahal.txt",
+  "scanned_copy": true
+ },
+ {
+  "doc_id": "ja-himejicastle",
+  "lang": "ja",
+  "wiki": "ja.wikipedia.org",
+  "article_title": "姫路城",
+  "topic_en": "Himeji Castle",
+  "page_id": 46690,
+  "rev_id": 111396583,
+  "rev_timestamp": "2026-10-15T14:20:05Z",
+  "source_text": "sources/ja-himejicastle.txt",
+  "scanned_copy": true
+ },
+ {
+  "doc_id": "kn-jogfalls",
+  "lang": "kn",
+  "wiki": "kn.wikipedia.org",
+  "article_title": "ಜೋಗ",
+  "topic_en": "Jog Falls",
+  "page_id": 817,
+  "rev_id": 1348343,
+  "rev_timestamp": "2026-03-23T17:34:57Z",
+  "source_text": "sources/kn-jogfalls.txt",
+  "scanned_copy": true
+ },
+ {
+  "doc_id": "mai-janakpur",
+  "lang": "mai",
+  "wiki": "mai.wikipedia.org",
+  "article_title": "जनकपुर उपमहानगरपालिका",
+  "topic_en": "Janakpur",
+  "page_id": 7248,
+  "rev_id": 281538,
+  "rev_timestamp": "2026-10-11T02:03:17Z",
+  "source_text": "sources/mai-janakpur.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "ml-idukkidam",
+  "lang": "ml",
+  "wiki": "ml.wikipedia.org",
+  "article_title": "ഇടുക്കി അണക്കെട്ട്",
+  "topic_en": "Idukki Dam",
+  "page_id": 10234,
+  "rev_id": 4437218,
+  "rev_timestamp": "2025-01-24T21:48:59Z",
+  "source_text": "sources/ml-idukkidam.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "mr-shaniwarwada",
+  "lang": "mr",
+  "wiki": "mr.wikipedia.org",
+  "article_title": "शनिवार वाडा",
+  "topic_en": "Shaniwar Wada",
+  "page_id": 4954,
+  "rev_id": 2705147,
+  "rev_timestamp": "2026-08-24T07:43:21Z",
+  "source_text": "sources/mr-shaniwarwada.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "ne-pashupatinath",
+  "lang": "ne",
+  "wiki": "ne.wikipedia.org",
+  "article_title": "पशुपतिनाथ मन्दिर",
+  "topic_en": "Pashupatinath Temple",
+  "page_id": 2005,
+  "rev_id": 1387294,
+  "rev_timestamp": "2026-09-26T07:39:56Z",
+  "source_text": "sources/ne-pashupatinath.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "or-chilika",
+  "lang": "or",
+  "wiki": "or.wikipedia.org",
+  "article_title": "ଚିଲିକା ହ୍ରଦ",
+  "topic_en": "Chilika Lake",
+  "page_id": 7183,
+  "rev_id": 538298,
+  "rev_timestamp": "2024-04-14T01:48:58Z",
+  "source_text": "sources/or-chilika.txt",
+  "scanned_copy": false
+ }
+]

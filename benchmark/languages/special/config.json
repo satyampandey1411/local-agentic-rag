@@ -1,0 +1,60 @@
+[
+ {
+  "doc_id": "sp-ar-burjkhalifa",
+  "lang": "ar",
+  "wiki": "ar.wikipedia.org",
+  "article_title": "برج خليفة",
+  "topic_en": "Burj Khalifa",
+  "page_id": 59503,
+  "rev_id": 76366455,
+  "rev_timestamp": "2026-08-28T20:13:33Z",
+  "source_text": "sources/sp-ar-burjkhalifa.txt",
+  "scanned_copy": false,
+  "renderer": "chromium",
+  "roundtrip_min": 0.97
+ },
+ {
+  "doc_id": "sp-hien-indiagate",
+  "lang": "hi-en",
+  "wiki": "hi.wikipedia.org",
+  "article_title": "इण्डिया गेट / India Gate",
+  "topic_en": "India Gate",
+  "page_id": 10881,
+  "rev_id": 6581754,
+  "rev_timestamp": "2026-07-11T21:02:07Z",
+  "source_text": "sources/sp-hien-indiagate.txt",
+  "scanned_copy": false,
+  "para_langs": [
+   "hi",
+   "en",
+   "hi",
+   "en",
+   "hi",
+   "en",
+   "hi",
+   "en",
+   "hi",
+   "en"
+  ],
+  "parts": [
+   {
+    "lang": "hi",
+    "wiki": "hi.wikipedia.org",
+    "article_title": "इण्डिया गेट",
+    "page_id": 10881,
+    "rev_id": 6581754,
+    "rev_timestamp": "2026-07-11T21:02:07Z"
+   },
+   {
+    "lang": "en",
+    "wiki": "en.wikipedia.org",
+    "article_title": "India Gate",
+    "page_id": 720662,
+    "rev_id": 1382854842,
+    "rev_timestamp": "2026-10-30T17:38:39Z"
+   }
+  ],
+  "title": "इण्डिया गेट / India Gate (India Gate) - alternating paragraphs from the Hindi Wikipedia article (revision 6581754, 2026-07-11) and the English Wikipedia article (revision 1382854842, 2026-10-30)",
+  "footer": "Text: 'India Gate', Hindi + English Wikipedia (pages 10881 / 720662, revs 6581754 / 1382854842), Wikipedia contributors, CC BY-SA 4.0"
+ }
+]

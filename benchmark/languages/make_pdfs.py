@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Build the many-language benchmark PDFs from the saved Wikipedia article text.
 
-    .venv/bin/python benchmark/languages/make_pdfs.py            # dev set
-    .venv/bin/python benchmark/languages/make_pdfs.py --heldout  # sealed held-out set
+    .venv/bin/python benchmark/languages/make_pdfs.py                  # dev set
+    .venv/bin/python benchmark/languages/make_pdfs.py --heldout        # sealed held-out set
+    .venv/bin/python benchmark/languages/make_pdfs.py --set heldout2   # second sealed held-out set
+    .venv/bin/python benchmark/languages/make_pdfs.py --set special    # mixed-language + Chromium Arabic
 
 Inputs : <set>/config.json            (one entry per document: language, article, page/revision id)
          <set>/sources/<doc_id>.txt   (plain-text Wikipedia extract, cut at paragraph boundaries)
@@ -20,6 +22,16 @@ compared with the source (also NFC, whitespace and heading markers removed). The
 share of source characters found in order (difflib matching blocks). A document below
 ROUNDTRIP_MIN is still written, but is flagged ``roundtrip_ok: false`` in documents.json and
 validate.py refuses questions on it.
+
+Optional config keys (used only by special/; the dev and held-out sets do not set them, so their
+output is unchanged):
+  para_langs     one language per paragraph (non-heading line), for a mixed-language document;
+                 paragraphs whose language differs from ``lang`` get their own ``lang`` and font.
+  parts          the source articles of a mixed document (lang, wiki, article_title, page_id,
+                 rev_id, rev_timestamp); written to documents.json with their revision URLs.
+  title, footer  override the manifest title / page footer.
+  renderer       "chromium": print the HTML with headless Chromium instead of LibreOffice.
+  roundtrip_min  a stricter round-trip threshold for this document.
 
 Text is CC BY-SA 4.0 (Wikipedia contributors).
 """
@@ -78,7 +90,11 @@ SCRIPTS = {
     "ar": ("Arabic", "ar", "rtl", '"Noto Naskh Arabic", "Noto Sans Arabic", serif'),
     "zh": ("Chinese", "zh-CN", "ltr", '"Noto Serif CJK SC", "Noto Sans CJK SC", serif'),
     "ja": ("Japanese", "ja", "ltr", '"Noto Serif CJK JP", "Noto Sans CJK JP", serif'),
+    # special/: alternating Hindi and English paragraphs (English paragraphs get LATIN, see para_langs)
+    "hi-en": ("Hindi-English", "hi", "ltr", DEVA),
 }
+SETS = {"dev": ".", "heldout": "heldout", "heldout2": "heldout2", "special": "special"}
+CHROMIUM = str(Path.home() / ".cache/ms-playwright/chromium-1248/chrome-linux64/chrome")
 CSS = """
 @page {{ size: A4; margin: 2cm; }}
 body {{ font-family: {font}; font-size: 12pt; }}
@@ -102,8 +118,10 @@ def fixed_meta(set_name: str) -> dict:
             "creationDate": "D:20261031000000Z", "modDate": "D:20261031000000Z"}
 
 
-def text_to_html(title: str, text: str, lang_tag: str, direction: str) -> str:
+def text_to_html(title: str, text: str, lang_tag: str, direction: str,
+                 para_langs: list[str] | None = None) -> str:
     parts = [f'<body lang="{lang_tag}" dir="{direction}"><h1>{html.escape(title)}</h1>']
+    langs = iter(para_langs or [])
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -112,6 +130,10 @@ def text_to_html(title: str, text: str, lang_tag: str, direction: str) -> str:
         if m:
             level = min(len(m.group(1)), 4)
             parts.append(f"<h{level}>{html.escape(m.group(2))}</h{level}>")
+        elif para_langs is not None and (pl := next(langs)) != lang_tag:
+            _, pl_tag, pl_dir, pl_font = SCRIPTS[pl]
+            font = pl_font.replace('"', "'")
+            parts.append(f'<p lang="{pl_tag}" dir="{pl_dir}" style="font-family: {font}">{html.escape(line)}</p>')
         else:
             parts.append(f"<p>{html.escape(line)}</p>")
     parts.append("</body>")
@@ -140,6 +162,8 @@ def _freeze(doc: pymupdf.Document, title: str, meta: dict) -> None:
 
 
 def footer_for(d: dict) -> str:
+    if "footer" in d:
+        return d["footer"]
     name = SCRIPTS[d["lang"]][0]
     return (f"Text: {name} Wikipedia, '{d['topic_en']}' (page id {d['page_id']}, rev {d['rev_id']}), "
             "Wikipedia contributors, CC BY-SA 4.0")
@@ -152,13 +176,20 @@ def build_text_pdf(base: Path, d: dict, out_dir: Path, meta: dict) -> tuple[Path
     css = CSS.format(font=font, align="right" if direction == "rtl" else "justify")
     page_html = (f'<!doctype html><html lang="{lang_tag}" dir="{direction}"><head><meta charset="utf-8">'
                  f"<title>{html.escape(title)}</title><style>{css}</style></head>"
-                 f"{text_to_html(title, text, lang_tag, direction)}</html>")
+                 f"{text_to_html(title, text, lang_tag, direction, d.get('para_langs'))}</html>")
     with tempfile.TemporaryDirectory() as td:
         h = Path(td) / f"{d['doc_id']}.html"
         h.write_text(page_html, encoding="utf-8")
-        subprocess.run([SOFFICE, "--headless", f"-env:UserInstallation=file://{td}/lo-profile",
-                        "--convert-to", "pdf:writer_pdf_Export", "--outdir", td, str(h)],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+        if d.get("renderer") == "chromium":
+            # --no-sandbox: Chromium's namespace sandbox aborts (signal 6) on this machine
+            subprocess.run([CHROMIUM, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-pdf-header-footer",
+                            f"--user-data-dir={td}/chromium-profile", f"--print-to-pdf={td}/{d['doc_id']}.pdf",
+                            h.as_uri()],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+        else:
+            subprocess.run([SOFFICE, "--headless", f"-env:UserInstallation=file://{td}/lo-profile",
+                            "--convert-to", "pdf:writer_pdf_Export", "--outdir", td, str(h)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
         doc = pymupdf.open(Path(td) / f"{d['doc_id']}.pdf")
         body_text = "".join(pg.get_text() for pg in doc)   # before the footer is added
         n = doc.page_count
@@ -195,11 +226,13 @@ def sha256(p: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--heldout", action="store_true", help="build heldout/ instead of the dev set")
+    ap.add_argument("--heldout", action="store_true", help="build heldout/ instead of the dev set (= --set heldout)")
+    ap.add_argument("--set", choices=sorted(SETS), default="dev", help="which set to build (default: dev)")
     ap.add_argument("--jobs", type=int, default=4)
     args = ap.parse_args()
-    base = HERE / "heldout" if args.heldout else HERE
-    set_name = "languages/heldout" if args.heldout else "languages"
+    which = "heldout" if args.heldout else args.set
+    base = HERE / SETS[which] if which != "dev" else HERE
+    set_name = f"languages/{SETS[which]}" if which != "dev" else "languages"
     meta = fixed_meta("languages")
     cfg = json.loads((base / "config.json").read_text(encoding="utf-8"))
     out_dir = base / "pdfs"
@@ -213,20 +246,27 @@ def main() -> int:
     for d, (pdf, score) in zip(cfg, built, strict=True):
         name = SCRIPTS[d["lang"]][0]
         n = pymupdf.open(pdf).page_count
-        ok = score >= ROUNDTRIP_MIN
+        ok = score >= d.get("roundtrip_min", ROUNDTRIP_MIN)
         if not ok:
             bad.append(d["doc_id"])
         url = f"https://{d['wiki']}/w/index.php?curid={d['page_id']}&oldid={d['rev_id']}"
-        manifest.append({
+        entry = {
             "doc_id": d["doc_id"],
-            "title": f"{d['article_title']} ({d['topic_en']}) - {name} Wikipedia article, "
-                     f"revision {d['rev_id']} ({d['rev_timestamp'][:10]})",
+            "title": d.get("title") or f"{d['article_title']} ({d['topic_en']}) - {name} Wikipedia article, "
+                                       f"revision {d['rev_id']} ({d['rev_timestamp'][:10]})",
             "url": url, "sha256": sha256(pdf), "num_pages": n,
             "doc_type": f"encyclopedia_article_{name.lower()}",
             "source_license_note": LICENCE, "language": d["lang"], "source_text": d["source_text"],
             "page_id": d["page_id"], "rev_id": d["rev_id"],
             "roundtrip_score": round(score, 4), "roundtrip_ok": ok,
-        })
+        }
+        for k in ("roundtrip_min", "renderer", "para_langs"):
+            if k in d:
+                entry[k] = d[k]
+        if "parts" in d:
+            entry["parts"] = [{**p, "url": f"https://{p['wiki']}/w/index.php?curid={p['page_id']}&oldid={p['rev_id']}"}
+                              for p in d["parts"]]
+        manifest.append(entry)
         print(f"{pdf.name:32s} {n} page(s)  round-trip {score:.3f} {'OK' if ok else 'FAIL'}")
         if d.get("scanned_copy"):
             sid = f"{d['doc_id']}-scan"

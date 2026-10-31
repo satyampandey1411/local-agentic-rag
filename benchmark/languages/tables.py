@@ -10,8 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run import rescore  # noqa: E402
 
 NAMES = {
     "en": "English", "hi": "Hindi", "mr": "Marathi", "sa": "Sanskrit", "ne": "Nepali", "bh": "Bhojpuri",
@@ -28,18 +32,18 @@ COMBOS = [
     ("library", "Searches all 22 books at once: must find the right one"),
     ("two-books", "Needs one fact from each of two books in different languages"),
     ("scanned", "Image-only copy: needs OCR"),
+    ("romanized", "Indian language typed in Latin letters (Hinglish, Roman Urdu, Tanglish, ...)"),
+    ("mixed", "One PDF mixing Hindi and English paragraphs"),
     ("unanswerable", "Not in the document: should be refused"),
 ]
 
 
 def load(path: str | None) -> list[dict]:
+    """Rows of a run.py results file, rescored with run.py's current checks."""
     if not path:
         return []
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return rescore([json.loads(line) for line in lines if line.strip()])
 
 
 def combo(r: dict) -> str:
@@ -57,6 +61,7 @@ def overall(rows: list[dict]) -> dict[str, str]:
     books = [r for r in rows if r.get("doc_ok") is not None]
     return {
         "Answerable questions answered correctly": frac(ans),
+        "... with spelling-tolerant name matching": frac(ans, "correct_lenient"),
         "Unanswerable questions refused": frac(una),
         "Answerable questions wrongly refused": f"{sum(r['refused'] for r in ans)}/{len(ans)}",
         "Answer written in the expected script": frac(rows, "script_ok"),

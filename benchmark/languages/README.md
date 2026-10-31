@@ -63,10 +63,10 @@ roman-ur 1. The answer-in requests are ur, mr, ta, bn, hi, en, te and fr (one ea
 |---|---|
 | `config.json`, `heldout/config.json` | Build input. One entry per document: language, article title, page id, revision id, revision timestamp, whether to make a scanned copy |
 | `sources/*.txt` | Plain-text Wikipedia extracts (`action=query&prop=extracts&explaintext=1`). The first ~2,000–2,900 characters (~1,100–1,700 for zh/ja) were kept, cut at a paragraph boundary, with headings |
-| `make_pdfs.py` | Builds `pdfs/` and writes `documents.json` (`--heldout` for the held-out set). Running it again gives byte-identical files on the same machine |
+| `make_pdfs.py` | Builds `pdfs/` and writes `documents.json` (`--heldout` for the held-out set, `--set heldout2` / `--set special` for the extra sets). Running it again gives byte-identical files on the same machine |
 | `documents.json` | The manifest: main schema plus `language`, `source_text`, `page_id`, `rev_id`, `roundtrip_score`, `roundtrip_ok`, and `derived_from`/`derived_pages` for scanned copies |
 | `questions.jsonl` | The questions (schema below) |
-| `.gitignore` | Keeps the generated `pdfs/` and `heldout/pdfs/` out of git, as in the 2-language set |
+| `.gitignore` | Keeps the generated `pdfs/`, `heldout/pdfs/`, `heldout2/pdfs/` and `special/pdfs/` out of git, as in the 2-language set |
 | `validate.py` | Checks the schema and combo rules, the SHA-256 and page counts, the round-trip, that scanned copies have no text layer, and that every fact is on its evidence pages (using the grader's own `alias_matches`) |
 
 ```bash
@@ -75,6 +75,44 @@ roman-ur 1. The answer-in requests are ur, mr, ta, bn, hi, en, te and fr (one ea
 .venv/bin/python benchmark/languages/make_pdfs.py --heldout   # only for the final sealed run
 .venv/bin/python benchmark/languages/validate.py --heldout
 ```
+
+## Extra sets (added after the first run)
+
+Built the same way (same schema, evidence pages computed from the real PDF text, checked by
+`validate.py`). `run.py` still knows only `--set dev|heldout`.
+
+| Path | What it is |
+|---|---|
+| `questions_more.jsonl` | 64 more questions on the 22 dev documents (q_id `lm-`): 42 `cross` (2 per document, none on `ar`), 10 `two-books`, 6 `romanized`, 6 `answer-in` (answers requested in gu, kn, mr, ur, hi, te). Specs in `specs_more.py` |
+| `heldout2/` | A **second sealed** held-out set: 10 new documents (hi Taj Mahal, mr Shaniwar Wada, ne Pashupatinath, awa Lucknow, mai Janakpur, bn Victoria Memorial, kn Jog Falls, ml Idukki Dam, or Chilika, ja Himeji Castle), image-only copies of hi, bn, kn and ja, 48 questions. `heldout2/SEALED.txt` holds the SHA-256. Do not read `heldout2/questions.jsonl` or `heldout2/specs.py` while you tune the system |
+| `special/` | `sp-hien-indiagate`: one PDF of alternating Hindi and English paragraphs (India Gate, from the hi and en articles; `para_langs` in `config.json`), with 3 `mixed` questions. `sp-ar-burjkhalifa`: the dev Arabic text printed with headless Chromium instead of LibreOffice. No questions (see below) |
+| `build_more.py` | Writes the three question files above from their specs. It never touches `questions.jsonl` or `heldout/` |
+
+New combos: `romanized` (a Latin-script question on a document in another script: `hinglish`,
+`roman-ur`, and the new codes `roman-ta` and `roman-bn`) and `mixed` (en, hi or hinglish on the
+`hi-en` document). `--set more` also refuses q_ids or questions that are already in `questions.jsonl`.
+
+```bash
+.venv/bin/python benchmark/languages/validate.py --set more
+.venv/bin/python benchmark/languages/make_pdfs.py --set special && .venv/bin/python benchmark/languages/validate.py --set special
+.venv/bin/python benchmark/languages/make_pdfs.py --set heldout2   # only for the final sealed run
+.venv/bin/python benchmark/languages/validate.py --set heldout2
+.venv/bin/python benchmark/languages/build_more.py more|heldout2|special   # regenerate a question file
+```
+
+What these sets found:
+- **Chromium does not fix Arabic.** Printed with headless Chromium (`--no-sandbox` is needed on
+  this machine), the Arabic text reads back at 0.837 (0.841 as `validate.py` measures it), worse
+  than LibreOffice (0.942). Each line comes back in visual order: numbers and brackets jump to
+  the other end of the line ("(2010 ... ( ُبرج خليفة"). The threshold for this document is 0.97,
+  so it has no questions.
+- **A doubled Devanagari letter.** In the mixed PDF, "जनवरी 2022" reads back as "जनववरी 2022"
+  (the same kind of fault as the Telugu one above). The Hinglish question therefore matches only
+  the year.
+- In `heldout2/`, 5 facts match only after whitespace is removed (a hyphenated Devanagari word,
+  one Kannada, one Malayalam and two Odia words split by the text layer). `validate.py` shows
+  them as warnings.
+- Legacy-font (Kruti Dev) PDFs are not tested: they would need a font download.
 
 ### Question schema
 Same as `benchmark/multilingual/questions.jsonl`, plus:
@@ -86,8 +124,9 @@ Same as `benchmark/multilingual/questions.jsonl`, plus:
   `evidence_pages` are filled in too. For `two-books`, `doc_id` and `evidence_pages` are `null`.
 - `combo`: the tag from the table above.
 
-Language codes are the Wikipedia codes, plus `hinglish` (Hindi in Latin letters) and
-`roman-ur` (Urdu in Latin letters). `bh` is Bhojpuri (bh.wikipedia.org). For scanned copies,
+Language codes are the Wikipedia codes, plus `hinglish` (Hindi in Latin letters),
+`roman-ur` (Urdu in Latin letters), `roman-ta` and `roman-bn` (Tamil and Bengali in Latin letters;
+extra sets only) and the document language `hi-en` (the mixed document in `special/`). `bh` is Bhojpuri (bh.wikipedia.org). For scanned copies,
 `evidence_pages` are pages of the scanned PDF. They have the same numbers as the source PDF,
 because every page was scanned.
 
