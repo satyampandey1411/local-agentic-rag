@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from local_agentic_rag.lang import ANSWER_LANGUAGE_CHOICES
 from local_agentic_rag.library_types import DocRecord, LibraryProtocol
 from local_agentic_rag.server import sse
 from local_agentic_rag.server.asks import AskGate, AskJob
@@ -81,6 +82,9 @@ class AskRequest(BaseModel):
     question: str = Field(..., description=f"1-{MAX_QUESTION_CHARS} characters")
     doc_ids: list[str] | None = Field(None, description="None = every ready document")
     history: list[tuple[str, str]] = Field(default_factory=list, description="(user, assistant)")
+    answer_language: str | None = Field(
+        None, description="'Hindi', 'Urdu', ... (lang.ANSWER_LANGUAGE_CHOICES); None = automatic"
+    )
 
 
 class _SecurityHeaders:
@@ -521,6 +525,14 @@ def create_app(
         ]
         return question, doc_ids, history
 
+    def _answer_language(body: AskRequest) -> str | None:
+        choice = (body.answer_language or "").strip()
+        if not choice or choice.lower() == "auto":
+            return None
+        if choice not in ANSWER_LANGUAGE_CHOICES:
+            raise HTTPException(422, f"Unknown answer language: {choice[:40]}")
+        return choice
+
     def _check_docs(doc_ids: list[str] | None) -> None:
         """Clear 404/409 messages before the question waits in line."""
         if doc_ids is None:
@@ -557,6 +569,7 @@ def create_app(
     @app.post("/api/ask")
     async def ask(body: AskRequest) -> JSONBody:
         question, doc_ids, history = _validate(body)
+        answer_language = _answer_language(body)
         await run_in_threadpool(_check_docs, doc_ids)
         g = gate()
         t0 = time.monotonic()
@@ -571,7 +584,16 @@ def create_app(
             raise
         queue_wait = time.monotonic() - t0
         try:
-            job = AskJob(library, executor, g, question, doc_ids, history, stream_steps=False)
+            job = AskJob(
+                library,
+                executor,
+                g,
+                question,
+                doc_ids,
+                history,
+                stream_steps=False,
+                answer_language=answer_language,
+            )
         except BaseException:
             g.release()
             raise
@@ -587,6 +609,7 @@ def create_app(
     @app.post("/api/ask/stream")
     async def ask_stream(body: AskRequest) -> StreamingResponse:
         question, doc_ids, history = _validate(body)
+        answer_language = _answer_language(body)
         await run_in_threadpool(_check_docs, doc_ids)
 
         async def stream() -> AsyncIterator[str]:
@@ -622,7 +645,16 @@ def create_app(
 
             queue_wait = time.monotonic() - t0
             try:
-                job = AskJob(library, executor, g, question, doc_ids, history, stream_steps=True)
+                job = AskJob(
+                    library,
+                    executor,
+                    g,
+                    question,
+                    doc_ids,
+                    history,
+                    stream_steps=True,
+                    answer_language=answer_language,
+                )
             except BaseException:
                 g.release()
                 raise

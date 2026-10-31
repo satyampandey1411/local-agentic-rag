@@ -12,6 +12,7 @@
   // ================================================================ constants
   const LS_SELECTED = 'pdfchat.selected.v1';
   const LS_CHAT = 'pdfchat.chat.v1';
+  const LS_ANSWER_LANG = 'pdfchat.answerLang.v1';
   const MAX_SAVED_MESSAGES = 60;
   const HISTORY_TURNS = 6;
   const MAX_PARALLEL_UPLOADS = 1; // the server allows one in-flight upload per address
@@ -252,6 +253,19 @@
     while (msgs.length && !store.set(LS_CHAT, msgs)) msgs = msgs.slice(Math.ceil(msgs.length / 2));
   }
   const saveSelected = () => store.set(LS_SELECTED, [...state.selected]);
+
+  // "Answer in" menu: automatic (null) or one language for every answer, remembered here.
+  function answerLanguage() {
+    const v = $('answer-lang') ? $('answer-lang').value : 'auto';
+    return v && v !== 'auto' ? v : null;
+  }
+  function initAnswerLanguage() {
+    const sel = $('answer-lang');
+    if (!sel) return;
+    const saved = store.get(LS_ANSWER_LANG, 'auto');
+    if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
+    sel.addEventListener('change', () => store.set(LS_ANSWER_LANG, sel.value));
+  }
 
   const readyDocs = () => [...state.docs.values()].filter((d) => d.status === 'ready');
   /** Ready, or still processing but with an indexed prefix that can already answer (partial answer). */
@@ -1036,7 +1050,7 @@
     }
     const user = { id: uid(), role: 'user', text: question, ts: Date.now() };
     const bot = {
-      id: uid(), role: 'assistant', status: 'pending', question, docIds: scopeIds(), ts: Date.now(),
+      id: uid(), role: 'assistant', status: 'pending', question, docIds: scopeIds(), answerLang: answerLanguage(), ts: Date.now(),
       steps: [], phase: 'connecting', queuePos: 0, startedAt: Date.now(),
     };
     state.messages.push(user, bot);
@@ -1079,7 +1093,7 @@
       const res = await fetch('api/ask/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ question: m.question, doc_ids: m.docIds || null, history: historyPairs(m.id) }),
+        body: JSON.stringify({ question: m.question, doc_ids: m.docIds || null, history: historyPairs(m.id), answer_language: m.answerLang || null }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -1395,6 +1409,7 @@
     });
 
     $('select-toggle').addEventListener('click', () => { state.selected.clear(); saveSelected(); renderLibrary(); });
+    initAnswerLanguage();
 
     // viewer
     $('page-prev').addEventListener('click', () => goToPage(state.viewer.page - 1));

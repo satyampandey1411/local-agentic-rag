@@ -48,6 +48,7 @@ def agent_for(generate):
         agent_mode="adaptive",
         max_retrieval_rounds=1,
         use_verifier=False,
+        pivot_translation=False,  # these tests are about naming the table, not the language
     )
     original = llm.responder
 

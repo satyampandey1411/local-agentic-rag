@@ -5,6 +5,7 @@ and cross-script translation over a mixed library."""
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 
 import pytest
@@ -28,6 +29,8 @@ from tests.test_multilingual import HINDI_CORPUS
     [
         ("Who built the Taj Mahal?", "English"),
         ("Charminar height?", "English"),
+        ("Charminar evaru kattaru? Ekkada undi?", "Telugu (Latin letters)"),
+        ("Thanjavur kovil yaar kattinaar? enna varusham?", "Tamil (Latin letters)"),
         ("Des Moines population?", "English"),
         ("Who was Le Corbusier?", "English"),
         ("Taj Mahal kisne banwaya tha?", "Hinglish"),
@@ -234,6 +237,35 @@ def test_ocr_fallback_uses_the_detected_script(monkeypatch):
     assert seen == {"cli": "tel+eng", "fallback": "tel+eng"}
 
 
+def test_ocr_timeout_retries_with_one_pack_at_lower_dpi(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd[-1], kwargs.get("timeout")))
+        if sum(1 for c in calls if c[0] != "dpi") == 1:  # the first Tesseract run overruns
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0, stdout="पहला अनुच्छेद\n\nदूसरा अनुच्छेद\n")
+
+    class _Pix:
+        def save(self, path):
+            open(path, "wb").close()
+
+    class _Page:
+        def get_pixmap(self, dpi):
+            calls.append(("dpi", dpi))
+            return _Pix()
+
+    monkeypatch.setattr(pdf.shutil, "which", lambda name: "/usr/bin/tesseract")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    paragraphs = pdf._ocr_cli_paragraphs(_Page(), 1, "tel+eng")
+    assert paragraphs == ["पहला अनुच्छेद", "दूसरा अनुच्छेद"]
+    assert ("dpi", pdf.OCR_DPI) in calls and ("dpi", pdf.OCR_RETRY_DPI) in calls
+    assert [c for c in calls if c[0] != "dpi"] == [
+        ("tel+eng", pdf.OCR_TIMEOUT_S),
+        ("tel", pdf.OCR_RETRY_TIMEOUT_S),
+    ]
+
+
 class _LegacyFontPage:
     def __init__(self, font: str) -> None:
         self.font = font
@@ -287,25 +319,122 @@ def test_mixed_library_translates_into_each_script():
     assert "Write the answer in Telugu" in generate_prompt
 
 
-def test_explicit_request_reaches_the_generator():
-    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
-    agent, llm = make_agent(
-        scripted(generate=cite("शाहजहाँ", "شاہجہاں [{n}]"), verify=VERIFY_OK),
-        agent_mode="adaptive",
-    )
+def _with_translations(llm, query="ताजमहल किसने बनवाया", answer=None):
+    """Route the query-translation and answer-translation calls of a scripted LLM."""
     original = llm.responder
 
     def responder(messages, schema):
         if schema is P.TRANSLATE_SCHEMA:
-            return json.dumps({"translation": "ताजमहल किसने बनवाया"})
+            return json.dumps({"translation": query})
+        if messages[0]["content"] == P.TRANSLATE_ANSWER_SYSTEM:
+            # keep the source answer's citation marker, as the prompt asks
+            marker = re.findall(r"\[\d+\]", messages[-1]["content"].split("Answer in")[-1])
+            text = answer if answer is not None else "TRANSLATED [1]"
+            return re.sub(r"\[\d+\]", marker[0], text) if marker and text else text
         return original(messages, schema)
 
     llm.responder = responder
-    agent.run("Who built the Taj Mahal? Answer in Urdu.", [index])
-    generate_prompt = [c for c in llm.calls if c["json_schema"] is None][0]["messages"][-1][
-        "content"
-    ]
-    assert "Write the answer in Urdu (the user asked for the answer in Urdu)" in generate_prompt
+
+
+def _prompts(llm):
+    free = [c for c in llm.calls if c["json_schema"] is None]
+    return [c["messages"][-1]["content"] for c in free], [c["messages"][0]["content"] for c in free]
+
+
+def test_explicit_request_answers_in_the_passages_language_then_translates():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm, answer="شاہجہاں نے بنوایا [1]۔")
+    ans = agent.run("Who built the Taj Mahal? Answer in Urdu.", [index])
+    prompts, systems = _prompts(llm)
+    assert "Write the answer in Hindi, the language of the passages" in prompts[0]
+    assert systems[-1] == P.TRANSLATE_ANSWER_SYSTEM
+    assert "into Urdu (the user asked for the answer in Urdu)" in prompts[-1]
+    assert ans.answer.startswith("شاہجہاں") and ans.cited_pages == [2]
+    assert "translate_answer" in steps(ans)
+
+
+def test_english_answers_stay_direct():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "Shah Jahan built it [{n}]."), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm)
+    ans = agent.run("Who built the Taj Mahal?", [index])
+    assert "translate_answer" not in steps(ans)
+    assert "Write the answer in English" in _prompts(llm)[0][0]
+
+
+def test_same_language_needs_no_pivot():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    ans = agent.run("ताजमहल किसने बनवाया?", [index])
+    assert "translate_answer" not in steps(ans)
+
+
+def test_failed_translation_keeps_the_checked_answer():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm, answer="")
+    ans = agent.run("తాజ్ మహల్‌ను ఎవరు నిర్మించారు?", [index])
+    assert ans.answer.startswith("शाहजहाँ") and ans.cited_pages == [2]
+
+
+def test_menu_choice_overrides_the_question_language():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm, answer="ஷாஜஹான் கட்டினார் [1].")
+    ans = agent.run("ताजमहल किसने बनवाया?", [index], answer_language="Tamil")
+    prompts, _ = _prompts(llm)
+    assert "into Tamil (the user chose it)" in prompts[-1]
+    assert ans.answer.startswith("ஷாஜஹான்")
+
+
+def test_translation_still_runs_after_a_suffix_was_appended():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm, answer="షాజహాన్ నిర్మించారు [1].")
+    original = agent._name_cited_table
+
+    def add_suffix(ans):
+        original(ans)
+        ans.answer += " (Table 2)"
+
+    agent._name_cited_table = add_suffix
+    ans = agent.run("తాజ్ మహల్‌ను ఎవరు నిర్మించారు?", [index])
+    assert ans.answer.startswith("షాజహాన్")
+
+
+def test_menu_choice_localises_the_refusal():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(
+            generate=P.ANSWER_NOT_FOUND,
+            plan={"standalone_question": "x", "search_queries": []},
+            grade={"relevant": [], "sufficient": False, "missing_query": ""},
+            verify=VERIFY_OK,
+        ),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm)
+    ans = agent.run("How tall is it?", [index], answer_language="Urdu")
+    assert ans.refused and "نہیں ملا" in ans.answer
 
 
 def test_telugu_refusal_is_localised():

@@ -149,6 +149,7 @@ class RAGPipeline:
         history: History | None = None,
         on_step: Callable[[TraceStep], None] | None = None,
         on_token: Callable[[dict[str, Any]], None] | None = None,
+        answer_language: str | None = None,
     ) -> Answer:
         question = (question or "").strip()
         if not question:
@@ -161,7 +162,14 @@ class RAGPipeline:
             raise RuntimeError("No LLM configured — pass llm=OllamaLLM(...) to RAGPipeline.")
         indexes = self._select(doc_id)
         agent = AgenticRAG(self.config, self.retriever(), self.llm)
-        return agent.run(question, indexes, history=history, on_step=on_step, on_token=on_token)
+        return agent.run(
+            question,
+            indexes,
+            history=history,
+            on_step=on_step,
+            on_token=on_token,
+            answer_language=answer_language,
+        )
 
 
 def _rename(index: DocumentIndex, doc_id: str) -> DocumentIndex:

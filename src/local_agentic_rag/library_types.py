@@ -65,6 +65,7 @@ class LibraryProtocol(Protocol):
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
         on_token: Callable[[dict[str, Any]], None] | None = None,
+        answer_language: str | None = None,
     ) -> (
         Answer
     ): ...  # blocking, thread-safe; doc_ids None = all ready docs; ValueError if a doc is not ready

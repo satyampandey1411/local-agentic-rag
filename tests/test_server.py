@@ -919,3 +919,31 @@ def test_step_event_never_overtakes_held_back_tokens() -> None:
     events = asyncio.run(run())
     kinds = [(n, d.get("text", d.get("step"))) for n, d in events]
     assert kinds == [("token", "Hello"), ("token", " world"), ("step", "verify")]
+
+
+class _LanguageLibrary(FakeLibrary):
+    """A library whose ``ask`` takes the "Answer in" choice, as the real one does."""
+
+    def ask(self, question, doc_ids, history, on_step=None, on_token=None, answer_language=None):
+        self.answer_languages = getattr(self, "answer_languages", []) + [answer_language]
+        return super().ask(question, doc_ids, history, on_step, on_token)
+
+
+def test_ask_passes_the_answer_language_choice(tmp_path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    lib = _LanguageLibrary(store)
+    lib.add_ready("d1", "Annual report")
+    with make_client(lib, tmp_path) as c:
+        assert c.post("/api/ask", json={"question": "q", "answer_language": "Urdu"}).status_code == 200
+        assert c.post("/api/ask", json={"question": "q", "answer_language": "auto"}).status_code == 200
+        assert c.post("/api/ask", json={"question": "q"}).status_code == 200
+        r = c.post("/api/ask", json={"question": "q", "answer_language": "Klingon"})
+        assert r.status_code == 422 and "Klingon" in r.json()["detail"]
+    lib.release.set()
+    assert lib.answer_languages == ["Urdu", None, None]
+
+
+def test_libraries_without_the_choice_keep_working(client, lib) -> None:
+    r = client.post("/api/ask", json={"question": "q", "answer_language": "Hindi"})
+    assert r.status_code == 200 and lib.asks[-1]["question"] == "q"

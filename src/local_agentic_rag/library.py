@@ -511,6 +511,7 @@ class Library:
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
         on_token: Callable[[dict[str, Any]], None] | None = None,
+        answer_language: str | None = None,
     ) -> Answer:
         question = (question or "").strip()
         if not question:
@@ -530,7 +531,12 @@ class Library:
         )
         agent = AgenticRAG(self.config, retriever, self.pipe.llm)
         answer = agent.run(
-            question[:2000], indexes, history=history, on_step=on_step, on_token=on_token
+            question[:2000],
+            indexes,
+            history=history,
+            on_step=on_step,
+            on_token=on_token,
+            answer_language=answer_language,
         )
         if partial is not None:  # at most one document is being ingested at a time
             answer.partial = {

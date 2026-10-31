@@ -425,3 +425,5 @@ kbd {
 .auth-box input { font: inherit; padding: 8px 10px; border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); background: var(--bg); color: var(--text); }
 .auth-error { color: var(--danger); margin: 0; font-size: 13.5px; }
+.answer-lang { white-space: nowrap; margin-left: 6px; }
+.answer-lang select { font: inherit; font-size: 12px; color: inherit; background: var(--surface, transparent); border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; margin-left: 2px; }

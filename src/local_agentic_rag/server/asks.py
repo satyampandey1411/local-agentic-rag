@@ -114,6 +114,7 @@ class AskJob:
         history: list[tuple[str, str]],
         stream_steps: bool,
         stream_tokens: bool | None = None,
+        answer_language: str | None = None,
     ) -> None:
         self.loop = asyncio.get_running_loop()
         self.events: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -126,6 +127,8 @@ class AskJob:
         kwargs: dict[str, Any] = {}
         if stream_tokens and _accepts_on_token(library):
             kwargs["on_token"] = self._on_token
+        if answer_language and _accepts(library, "answer_language"):
+            kwargs["answer_language"] = answer_language
         cf = executor.submit(library.ask, question, doc_ids, history, on_step, **kwargs)
         # The gate slot is held until the *thread* finishes, even if the client
         # already got a timeout - see the module docstring.
@@ -183,6 +186,13 @@ class AskJob:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+
+
+def _accepts(library: LibraryProtocol, name: str) -> bool:
+    try:
+        return name in inspect.signature(library.ask).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _accepts_on_token(library: LibraryProtocol) -> bool:

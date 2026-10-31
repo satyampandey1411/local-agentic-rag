@@ -207,6 +207,7 @@ class DemoLibrary:
         history: list[tuple[str, str]],
         on_step: Callable[[TraceStep], None] | None = None,
         on_token: Callable[[dict[str, Any]], None] | None = None,
+        answer_language: str | None = None,  # demo mode quotes passages as they are
     ) -> Answer:
         t_start = time.perf_counter()
         with self._lock:
