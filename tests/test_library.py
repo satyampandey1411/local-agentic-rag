@@ -485,3 +485,12 @@ def test_concurrent_partial_asks_share_one_build(tmp_path, upload, paused_ingest
     assert len(results) == 2 and results[0] is results[1] and results[0].pages_indexed == 10
     proceed.set()
     lib.close()
+
+
+def test_display_title_prefers_a_meaningful_file_name():
+    from local_agentic_rag.library import display_title
+
+    assert display_title("9-11_Commission_Report", "201-635.job") == "9-11 Commission Report"
+    assert display_title("scan_0012", "Annual Report 2024") == "Annual Report 2024"
+    assert display_title("document (3)", "Budget") == "Budget"
+    assert display_title("a3f9c2b1d4e5f6a7", "") == "a3f9c2b1d4e5f6a7"

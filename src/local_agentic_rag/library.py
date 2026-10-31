@@ -59,6 +59,27 @@ from local_agentic_rag.retrieval.hybrid import HybridRetriever
 from local_agentic_rag.retrieval.index import DocumentIndex
 from local_agentic_rag.schema import Answer, TraceStep
 
+#: File names that say nothing about the document ("scan_0012", "document (3)", a hash).
+_GENERIC_NAME_RE = re.compile(
+    r"^(?:document|doc|file|scan|scanned|download|untitled|new|output|print|image|img|pdf)?"
+    r"[\s_()-]*\d*[\s_()-]*$|^[0-9a-f]{12,}$",
+    re.IGNORECASE,
+)
+
+
+def display_title(filename_title: str, parsed_title: str | None) -> str:
+    """The name shown in the library and on citations.
+
+    The uploaded file name is what the user recognises ("9-11_Commission_Report"), so it is
+    kept unless it is generic; the title read from the PDF is often junk ("201-635.job" in
+    the 9/11 Report's metadata, or a garbled first-page heading).
+    """
+    name = (filename_title or "").replace("_", " ").strip()
+    if name and not _GENERIC_NAME_RE.match(name):
+        return name
+    return (parsed_title or "").strip() or name or "Untitled"
+
+
 logger = logging.getLogger(__name__)
 
 #: Upper bound on passages held in memory across loaded indexes (~10,000 pages is ~40k).
@@ -397,7 +418,7 @@ class Library:
                 doc_id,
                 status="ready",
                 stage="",
-                title=report.title or rec.title,
+                title=display_title(rec.title, report.title),
                 num_pages=report.num_pages,
                 pages_done=report.num_pages,
                 askable=False,

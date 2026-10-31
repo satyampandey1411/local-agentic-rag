@@ -63,6 +63,7 @@ Rules:
 - Translate the meaning faithfully. Do not add, drop or change any fact.
 - Keep every citation marker such as [1] or [2][3] exactly, right after the sentence it belongs to.
 - Keep numbers as digits. Write names in the script of the target language.
+- Do not add words about the passages (no "according to passage [1]"); translate only what the answer says.
 - Reply with the translation only.
 
 Answer in {source}:
