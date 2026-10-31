@@ -2,7 +2,7 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/satyampandey1411/local-agentic-rag/blob/main/notebooks/Quick_Start.ipynb)
 
-**[▶ Watch the 10-minute demo video](https://github.com/satyampandey1411/local-agentic-rag/releases/download/v1.0/Local_Agentic_RAG_Demo.mp4)** · [Animated architecture walkthrough](docs/architecture.html)
+**[▶ Watch the 10-minute demo video](https://github.com/satyampandey1411/local-agentic-rag/releases/download/v1.0/Local_Agentic_RAG_Demo.mp4)** · [Animated architecture walkthrough](https://raw.githack.com/satyampandey1411/local-agentic-rag/main/docs/architecture.html)
 
 **Ask questions about any PDF, even a 10,000-page one, in your own language, and get answers with page
 citations you can click.** Every model runs locally on a single T4 GPU (free Google Colab or Kaggle). No
