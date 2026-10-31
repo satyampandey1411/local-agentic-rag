@@ -68,6 +68,9 @@ logger = logging.getLogger(__name__)
 
 History = list[tuple[str, str]]
 
+#: Most translated search queries per question (one per document script it does not share).
+MAX_TRANSLATIONS = 3
+
 
 class AgenticRAG:
     def __init__(self, config: RAGConfig, retriever: HybridRetriever, llm: LLM) -> None:
@@ -405,26 +408,37 @@ class AgenticRAG:
 
         BGE-M3 already matches across languages, but keyword search (BM25) and the
         reranker do better with a same-language query, and Hinglish is out of
-        distribution for both models — one cheap translation call fixes that.
+        distribution for both models — one cheap translation call fixes that.  When the
+        searched documents use several scripts, the question is translated into each one
+        it does not share (at most ``MAX_TRANSLATIONS``, one call each).
         """
         self._n_primary = 1
-        scripts = {getattr(ix, "script", "unknown") for ix in indexes}
-        doc_script = scripts.pop() if len(scripts) == 1 else "unknown"
-        if not (self.config.translate_queries and lang.needs_translation(question, doc_script)):
+        if not self.config.translate_queries:
             return [question]
-        sample = " ".join(c.text for c in indexes[0].chunks[:3])[:400]
-        msgs = [
-            {"role": "system", "content": P.TRANSLATE_SYSTEM},
-            {"role": "user", "content": P.TRANSLATE_USER.format(sample=sample, question=question)},
-        ]
-        data = self._step(
-            ans, "translate", lambda: self._json_call(msgs, P.TRANSLATE_SCHEMA, max_tokens=120)
-        )
-        translation = str((data or {}).get("translation", "")).strip()
-        if not translation or translation == question:
-            return [question]
-        self._n_primary = 2
-        return [question, translation]
+        first_of_script: dict[str, DocumentIndex] = {}
+        for ix in indexes:
+            first_of_script.setdefault(getattr(ix, "script", "unknown"), ix)
+        targets = [ix for s, ix in first_of_script.items() if lang.needs_translation(question, s)]
+        queries = [question]
+        for ix in targets[:MAX_TRANSLATIONS]:
+            sample = " ".join(c.text for c in ix.chunks[:3])[:400]
+            msgs = [
+                {"role": "system", "content": P.TRANSLATE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": P.TRANSLATE_USER.format(sample=sample, question=question),
+                },
+            ]
+            data = self._step(
+                ans,
+                "translate",
+                lambda m=msgs: self._json_call(m, P.TRANSLATE_SCHEMA, max_tokens=120),
+            )
+            translation = str((data or {}).get("translation", "")).strip()
+            if translation and translation not in queries:
+                queries.append(translation)
+        self._n_primary = len(queries)
+        return queries
 
     def _plan(self, question: str, title: str, history: History | None) -> dict[str, Any] | None:
         msgs = [
