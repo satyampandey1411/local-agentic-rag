@@ -314,8 +314,9 @@ ruff check src tests
 
 ## Project report
 
-[report/Local_Agentic_RAG_Progress_Report.pdf](report/Local_Agentic_RAG_Progress_Report.pdf): architecture,
-benchmarks and status in five pages (source `report/main.tex`, build with `report/build.sh`).
+[report/Local_Agentic_RAG_Report.pdf](report/Local_Agentic_RAG_Report.pdf): the problem, the design and
+the measurement behind each choice, results in 22 languages and on 10,000-page PDFs, and what is still weak,
+in eight pages (source `report/main.tex`, build with `report/build.sh`).
 
 ## License and data
 

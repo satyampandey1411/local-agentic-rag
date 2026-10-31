@@ -1,17 +1,20 @@
-% Local Agentic RAG for PDFs: hackathon final report (pdfLaTeX).
-% Build: ./build.sh   (or Overleaf: pdfLaTeX, main file main.tex)
-% Every number below is measured and labelled with its run. docs/RESULTS.md and docs/SCALE.md list where each one comes from.
-% \pending{} marks a number that a GPU run has not yet supplied (none left in the text).
+% Local Agentic RAG for PDFs: final competition report (pdfLaTeX).
+% Started from ../main.tex (the progress report); that file and its PDF are unchanged.
+% Build: ./build.sh   (pdfLaTeX in the texlive/texlive Docker image, repository root mounted for the figures)
+% Every number below is measured and labelled with its run. docs/RESULTS.md, docs/SCALE.md and docs/STATUS.md
+% list where each one comes from. Dev set = the 61 English + 20 multilingual questions used during development;
+% held-out = documents whose questions were written independently and used exactly once.
 \documentclass[10pt,a4paper]{article}
 
 \usepackage[T1]{fontenc}
 \usepackage[default,semibold]{sourcesans}
-\usepackage[a4paper,top=15mm,bottom=15mm,left=17mm,right=17mm]{geometry}
+\usepackage[a4paper,top=15mm,bottom=17mm,left=17mm,right=17mm]{geometry}
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage{graphicx}
+\graphicspath{{figures/}{../docs/img/}}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,calc,shapes.geometric,shadows,fit,backgrounds}
+\usetikzlibrary{arrows.meta,positioning,calc}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usepackage[most]{tcolorbox}
@@ -22,6 +25,7 @@
 \usepackage{titlesec}
 \usepackage{fontawesome5}
 \usepackage{multicol}
+\usepackage{fancyhdr}
 \usepackage[hidelinks]{hyperref}
 \hypersetup{pdftitle={Local Agentic RAG for PDFs: final report},pdfauthor={Satyam Kumar Pandey}}
 
@@ -41,12 +45,17 @@
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{4pt}
 \linespread{1.06}
-\pagestyle{empty}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[L]{\color{muted}\fontsize{7.5}{9}\selectfont Local Agentic RAG for PDFs \enspace·\enspace final report}
+\fancyfoot[R]{\color{muted}\fontsize{7.5}{9}\selectfont\thepage}
 
 % ---------------------------------------------------------------- headings
 \titleformat{\section}{\color{navy}\fontsize{13.5}{16}\selectfont\bfseries}
   {\color{amber}\thesection\hspace{6pt}}{0pt}{}
-\titlespacing*{\section}{0pt}{9pt}{4pt}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
 \titleformat{\subsection}{\color{navy}\fontsize{10.5}{13}\selectfont\bfseries}{}{0pt}{}
 \titlespacing*{\subsection}{0pt}{6pt}{2pt}
 
@@ -60,7 +69,7 @@
 % metric card: value, label, footnote
 \newcommand{\metric}[3]{%
   \begin{tcolorbox}[enhanced,colback=paper,colframe=paper,arc=3pt,
-      left=7pt,right=5pt,top=5pt,bottom=5pt,height=24mm,valign=top,
+      left=7pt,right=5pt,top=5pt,bottom=5pt,height=27mm,valign=top,
       borderline west={2.5pt}{0pt}{amber}]\raggedright
     {\color{navy}\fontsize{19}{21}\selectfont\bfseries #1}\par\vspace{1pt}
     {\fontsize{8.6}{10.2}\selectfont\bfseries #2}\par\vspace{1pt}
@@ -71,199 +80,146 @@
   left=8pt,right=8pt,top=6pt,bottom=6pt,#1}
 
 \newcommand{\done}{{\color{good}\faCheckCircle}}
-\newcommand{\todo}{{\color{warn}\faClock[regular]}}
-\newcommand{\unmeasured}{\raisebox{0pt}[0pt][0pt]{\color{warn}\faFlask}}
-% placeholder for a number that the final GPU run will supply
-\newcommand{\pending}{\tcbox[on line,box align=base,colback=rule!70,colframe=rule!70,arc=2pt,boxsep=0pt,
-  left=2.5pt,right=2.5pt,top=0.6pt,bottom=0.6pt]{\color{muted}\fontsize{6.6}{8}\selectfont\bfseries measurement pending}}
 
 \begin{document}
 
 % =====================================================================
-% PAGE 1: cover band, title, results at a glance, problem
+% Cover, results at a glance, abstract
 % =====================================================================
+\thispagestyle{empty}
 \begin{tikzpicture}[remember picture,overlay]
   \node[anchor=north,inner sep=0] at (current page.north)
-    {\includegraphics[width=\paperwidth]{figures/cover.png}};
+    {\includegraphics[width=\paperwidth]{cover.png}};
   \node[anchor=north west,text=white,font=\fontsize{8}{10}\selectfont\bfseries]
     at ([xshift=17mm,yshift=-11mm]current page.north west)
-    {\MakeUppercase{Hackathon final report \enspace·\enspace Local Agentic RAG}};
+    {\MakeUppercase{UTMT Local PDF Chatbot Competition \enspace·\enspace final report}};
 \end{tikzpicture}
 
-\vspace*{80mm}
+\vspace*{78mm}
 
 {\color{navy}\fontsize{25}{29}\selectfont\bfseries Local Agentic RAG for PDFs}\par
 \vspace{3pt}
-{\color{muted}\fontsize{12}{15}\selectfont Cited answers from any PDF, in English, Hindi, Hinglish and Marathi,
-using open-weight models on a free Google Colab T4 GPU}\par
+{\color{muted}\fontsize{12}{15}\selectfont Cited answers from PDFs of up to 10,000 pages, tested in 22 languages from Sanskrit and Bhojpuri to Urdu, Telugu and Chinese,
+using only open-weight models on one T4 GPU}\par
 \vspace{8pt}
 \begin{tabularx}{\textwidth}{@{}X r@{}}
   {\fontsize{9.5}{12}\selectfont\bfseries Satyam Kumar Pandey}\enspace
-  {\color{muted}\fontsize{9}{12}\selectfont\enspace private project}
+  {\color{muted}\fontsize{9}{12}\selectfont\enspace Team PageProof}
   &
   \tcbox[on line,colback=navy,colframe=navy,arc=8pt,left=6pt,right=6pt,top=2pt,bottom=2pt]
-    {\color{white}\fontsize{8.5}{10}\selectfont\bfseries Final report \enspace·\enspace 31 October 2026}
+    {\color{white}\fontsize{8.5}{10}\selectfont\bfseries Final report}
 \end{tabularx}
 
 \vspace{6pt}
-\kicker{Results at a glance (Kaggle T4, 26--27 Oct)}\par\vspace{3pt}
-\begin{tcbraster}[raster columns=4,raster equal height,raster column skip=6pt,raster before skip=0pt,raster after skip=0pt]
-  \metric{84.6\%}{answer accuracy}{61 English questions; 76.9\% before the 27 Oct number fixes, 50.0\% at baseline}
-  \metric{94.2\%}{page recall@5}{evidence page in the top 5, up from 73.1\% for the starting code}
-  \metric{88.9\%}{multilingual accuracy}{20 questions: Hindi, Hinglish, Marathi, English, scanned pages}
-  \metric{8.9 GB}{GPU memory in use}{of 15 GB on the T4, with the LLM, embedder and reranker loaded}
+\kicker{Results at a glance (Kaggle T4 runs)}\par\vspace{3pt}
+\begin{tcbraster}[raster columns=4,raster equal height,raster column skip=6pt,raster row skip=6pt,raster before skip=0pt,raster after skip=0pt]
+  \metric{84.6\%}{answer accuracy, dev set}{44/52 answerable English questions; 95\% interval 73.1--94.2\%}
+  \metric{1/52}{same model, no documents}{the answers come from retrieval, not from the model's memory}
+  \metric{43/57}{held-out documents}{GAO 15/18, US Code Title 21 19/25, Hindi audit 9/14; each used once}
+  \metric{9/9}{unanswerable refused}{English dev questions with no answer in the document}
+  \metric{94.2\%}{page recall@5}{evidence page in the top 5; 73.1\% for the starting code}
+  \metric{85/111}{22 languages, dev set}{117/122 answered in the right script; 33/44 and 18/20 on 16 unseen documents}
+  \metric{36.9 min}{for 10,000 pages}{table-heavy PDF on a T4, with crash recovery}
+  \metric{8.9 GB}{GPU memory in use}{of 15 GB, with all three models loaded}
 \end{tcbraster}
 
+\vspace{4pt}
+\begin{panel}
+\fontsize{9.2}{11.6}\selectfont
+\textbf{Summary.} Local Agentic RAG answers questions about any uploaded PDF and cites the pages it used.
+It runs only open-weight models on a single free T4 GPU, with no outside AI service and no API key. Ingestion reads PDFs in
+reading order, rebuilds tables row by row, OCRs scanned pages and indexes them in checkpointed batches, so a 10,000-page PDF is processed with crash recovery and can be
+queried while it is still being read. Each question runs a hybrid search (BGE-M3 meaning search and BM25 keyword search, fused by rank), a multilingual reranker keeps six passages,
+and Qwen2.5-7B writes an answer that must cite them. A verifier checks every claim. Only when the answer is refused or unsupported does the agent plan sub-questions, search again and rewrite,
+and a Python calculator does the arithmetic. Every design choice, including the choice of answer model among five candidates, was measured on a T4. A web app streams answers, opens the
+cited page with the passage highlighted, and serves several users through a visible queue.
+\end{panel}
+
 \section{The problem and the goal}
-Long PDFs such as statutes, budget documents, statistical abstracts and research reports are hard to search.
+Long PDFs such as statutes, budget documents, statistical abstracts and audit reports are hard to search.
 Hosted chatbots can answer questions about them, but they cost money, send the document to a third party,
 and often answer confidently when the PDF does not say. We build for people who cannot or should not upload such files:
-law students and small law firms working with statutes and contracts, government and NGO analysts in India with
+law students and small firms working with statutes and contracts, government and NGO analysts in India with
 budget books, statistical abstracts and scanned Hindi or Marathi circulars, researchers, and compliance teams.
-Our goal is a local tool that answers questions about \emph{any} uploaded PDF, from a few pages to 10,000 pages,
+The goal is a local tool that answers questions about \emph{any} uploaded PDF, from a few pages to 10,000 pages,
 under four constraints:
-
 \begin{itemize}
-  \item \textbf{Local only.} Open-weight models and no API keys, so the document never leaves the runtime.
-  \item \textbf{Free hardware.} One Colab T4: 15 GB GPU memory, 12.7 GB host RAM, 2 vCPUs.
+  \item \textbf{Local only.} Open-weight models and no API keys, so the document never leaves the machine.
+  \item \textbf{Free hardware.} One T4 as on free Colab: 15 GB GPU memory, 12.7 GB host RAM, 2 vCPUs.
   \item \textbf{Grounded.} Every answer cites the pages it used, or says the document does not contain the answer.
   \item \textbf{Multilingual.} Questions and documents may be in different languages, and scanned pages must work.
 \end{itemize}
-
 We started from the reference notebook and an early codebase that had only a non-agentic baseline
 (MiniLM search, no tables, no OCR, English only). We rebuilt ingestion, retrieval and the agent, measured
-every change on a fixed benchmark, and then scaled ingestion to 10,000 pages and added a multi-user web app.
-
-
+every change on a fixed benchmark, scaled ingestion to 10,000 pages, added a multi-user web app, and finally checked
+the system on documents it had never seen.
 
 % =====================================================================
-% PAGE 2: approach and architecture
-% =====================================================================
-\begin{panel}
-\begin{multicols}{2}
-\kicker{Working today}\par\vspace{2pt}
-\begin{itemize}
-  \item Notebook that runs top to bottom on a fresh T4
-  \item Web app: library, queue, citations that open the highlighted page
-  \item PDFs of 100 to 10,000 pages, with crash recovery
-  \item Tables, two-column layouts, scanned pages (OCR)
-\end{itemize}
-\columnbreak
-\kicker{Still open}\par\vspace{2pt}
-\begin{itemize}
-  \item Numerical questions on dense tables
-  \item Five of 12 US Code questions still wrong (numeric, multi-hop, a definition)
-  \item Faster ingestion of table-heavy PDFs
-\end{itemize}
-\end{multicols}
-\end{panel}
-
-\newpage
-\section{Approach and architecture}
+\section{Architecture: the end-to-end flow}
 The system has two paths. \textbf{Ingestion} runs once per PDF and is cached by file hash.
-\textbf{Answering} runs per question. A single pass that retrieves, answers and verifies handles most questions,
-and the agent loop starts only when that pass refuses or the verifier finds an unsupported claim.
+\textbf{Answering} runs per question. One pass that retrieves, answers and verifies handles most questions;
+the agent loop starts only when that pass refuses or the verifier finds an unsupported claim.
+Figure 1 follows one real question from a recording session on a free Colab T4.
 
-\vspace{2pt}
 \begin{center}
-\begin{tikzpicture}[
-    font=\fontsize{8.4}{10}\selectfont,
-    box/.style={draw=none,rounded corners=3pt,fill=white,align=center,minimum height=13mm,
-                text width=27mm,inner sep=3pt,drop shadow={opacity=0.18,shadow xshift=0.6pt,shadow yshift=-0.9pt}},
-    head/.style={font=\fontsize{8.6}{10}\selectfont\bfseries,text=navy},
-    llm/.style={box,fill=navy,text=white},
-    arr/.style={-{Stealth[length=2.2mm]},line width=0.9pt,draw=cyan},
-    loop/.style={-{Stealth[length=2.2mm]},line width=0.9pt,draw=amber,dashed},
-    lane/.style={rounded corners=5pt,fill=paper,draw=none},
-    tag/.style={font=\fontsize{7.2}{8.6}\selectfont\bfseries,text=muted}]
-
-  % ingestion lane
-  \node[box] (pdf)   at (0,0)     {{\color{amber}\faFilePdf[regular]}\par\textbf{PDF}\par any upload};
-  \node[box] (parse) at (3.5,0)  {\textbf{Parse}\par isolated workers, reading order, tables\,$\to$\,rows};
-  \node[box] (ocr)   at (7.0,0)   {\textbf{OCR}\par Tesseract, eng+hin+mar, scanned pages only};
-  \node[box] (chunk) at (10.5,0)  {\textbf{Chunk}\par $\le$320 tokens, split at headings, one page each};
-  \node[box] (index) at (14.0,0)  {\textbf{Index}\par vectors + keywords on disk, checkpoints};
-  \draw[arr] (pdf) -- (parse); \draw[arr] (parse) -- (ocr); \draw[arr] (ocr) -- (chunk); \draw[arr] (chunk) -- (index);
-
-  % answering lane
-  \node[box] (q)     at (0,-2.3)    {{\color{amber}\faComment[regular]}\par\textbf{Question}\par any language};
-  \node[box] (lang)  at (3.5,-2.3) {\textbf{Language check}\par adds a translated query if needed};
-  \node[box] (ret)   at (7.0,-2.3)  {\textbf{Retrieve}\par BGE-M3 + BM25, reranker, top 6};
-  \node[box] (calc)  at (10.5,-2.3) {\textbf{Calculator}\par exact maths for\par ``how much'' questions};
-  \node[llm] (gen)   at (14.0,-2.3) {\textbf{Answer}\par Qwen2.5-7B\par cites every sentence};
-  \draw[arr] (q) -- (lang); \draw[arr] (lang) -- (ret); \draw[arr] (ret) -- (calc); \draw[arr] (calc) -- (gen);
-  \draw[arr] (index.south) -- node[left,tag,pos=0.55]{passages} ++(0,-0.62) -| ($(ret.north)+(0.35,0)$);
-
-  % verify + output
-  \node[llm] (ver)   at (14.0,-4.55)  {\textbf{Verify}\par is every claim in the passages?};
-  \node[box,fill=good!12,text width=27mm] (out) at (9.6,-4.55)
-     {{\color{good}\faCheckCircle}\par\textbf{Cited answer}\par pages, or ``not in the document''};
-  \draw[arr] (gen) -- (ver);
-  \draw[arr] (ver) -- node[above,tag,yshift=1pt]{supported} (out);
-
-  % escalation loop
-  \node[box,fill=amber!10,text width=40mm] (agent) at (3.9,-4.55)
-     {\textbf{Agent loop} (only on refusal or unsupported claim)\par plan sub-queries, re-retrieve, grade evidence, regenerate};
-  \draw[loop] (ver.south) -- ++(0,-0.55) -| node[pos=0.25,below,tag]{refused or unsupported} (agent.south);
-  \draw[loop] (agent.north) -- node[left,tag]{} ($(ret.south west)!0.5!(ret.south)$);
-
-  % lane labels
-  \begin{scope}[on background layer]
-    \node[lane,fit=(pdf)(index),inner xsep=5pt,inner ysep=11pt,label={[head,anchor=south west]north west:Ingestion, once per PDF}] {};
-    \node[lane,fit=(q)(gen)(ver)(agent)(out),inner xsep=5pt,inner ysep=11pt,yshift=-4pt,
-          label={[head,anchor=south west]north west:Answering, per question}] {};
-  \end{scope}
-\end{tikzpicture}
+\begin{tcolorbox}[enhanced,colback=white,colframe=rule,boxrule=0.6pt,arc=3pt,left=0pt,right=0pt,top=0pt,bottom=0pt,width=0.97\textwidth]
+\includegraphics[width=\linewidth]{workflow.png}
+\end{tcolorbox}
+\vspace{2pt}\note{\textbf{Figure 1.} The workflow on one example: the 9/11 Commission Report (585 pages, 2,126 passages, processed in 46\,s) and the question
+``How many crew members were killed in the USS Cole attack?''. The answer, 17, cites pages 208 and 209 and is marked verified.}
 \end{center}
-\vspace{-4pt}
-\note{Navy boxes are LLM calls (Qwen2.5-7B-Instruct, 4-bit, served by Ollama). A typical question uses two to four calls,
-and the loop never exceeds eight. Structured steps use JSON-schema constrained output, and every step falls back to the simpler path if it fails.}
 
-\subsection{Long documents and the web app}
-\textbf{Ingestion} is a two-pass stream. Pass 1 reads 16-page batches in parallel worker processes and records document-wide counts
-(repeated margin lines, body font size); pass 2 strips headers, chunks and embeds 48-page batches. A page that crashes or hangs the PDF library kills only its
-worker: it becomes an empty page with a warning. Both passes checkpoint, so a cancelled job or a closed notebook resumes where it stopped, and
-vectors (float16) and the BM25 matrix live on disk.
-The \textbf{web app} puts this behind a document library: uploads stream to disk, a background queue shows progress, and several users share one GPU with a visible waiting line.
-Answers stream word by word and are then replaced by the verified, cited text; a long document can be questioned once its first batch is indexed;
-each citation opens the rendered page with the passage highlighted; an optional access token and upload limits protect a shared server.
+\vspace{-6pt}
+\textbf{Per question.} (1) If there is chat history, a follow-up is rewritten as a standalone question; if the question's language differs from the document's,
+one LLM call translates it, and passages are ranked by the better of the original and the translation; a page named in the question (``page 4,512'') pulls that page's
+passages into the pool. (2) BGE-M3 dense search and BM25 keyword search each return 30 candidates, reciprocal rank fusion keeps 24, and the cross-encoder reranker keeps 6.
+(3) For a question that needs arithmetic, the LLM picks a structured operation and copies the operands with citations, each operand is checked against the cited row and column,
+and Python computes the result. (4) Qwen2.5-7B answers from the six numbered passages, citing each claim as [n], or replies that the document does not contain the answer.
+(5) The verifier checks every claim against the passages it cites. If the answer is supported, it is returned. Otherwise the agent plans sub-questions, retrieves again
+(still ranked by the user's question; each sub-question only adds its best passage), drops passages that both the grader and the reranker reject, and rewrites with feedback.
+In the regression run (run 3) the median question used \textbf{2 LLM calls} and the most was 9. Structured steps use JSON-schema constrained output, and every step falls back
+to the simpler path if its output is invalid (in run 8 no model produced an invalid JSON step).
 
-\subsection{Design decisions and the evidence behind them}
+% =====================================================================
+\section{Ingesting long PDFs}
+The first design parsed the whole PDF in memory and saved the index at the end. That works for 60 pages and fails at 10,000:
+memory grows with the document, one malformed page can crash the process, and a disconnect after an hour loses everything.
+Ingestion is now a two-pass stream with checkpoints:
+\begin{itemize}
+  \item \textbf{Pass 1, read (CPU, parallel).} Worker processes parse 16-page batches: column-aware reading order, ruled tables to Markdown, whitespace-aligned tables
+        rebuilt from word coordinates as labelled rows (\texttt{label | 2025 Q2 = 3.8}), and OCR for image-only or garbled pages (Tesseract at 300 dpi, \texttt{eng+hin+mar}).
+        Pass 1 also counts the document-wide facts that pass 2 needs: margin lines that repeat on 40\% of pages (running headers) and the body font size (for headings).
+  \item \textbf{Pass 2, index (in page order).} Strip running headers and footers, cut passages of at most 320 embedder tokens at headings, paragraphs and sentences
+        (never across a page, with a ``title \textgreater{} section'' header), embed 48-page batches on the GPU, and write float16 vectors to disk. The BM25 matrix is built at the end.
+  \item \textbf{Crash isolation.} A page that crashes the PDF library or exceeds its time budget kills only its worker: that page becomes an empty page with a warning,
+        the worker restarts and the batch continues.
+  \item \textbf{Resumable.} Each pass appends, fsyncs, then atomically replaces a checkpoint file. A crash, a cancelled job or a closed notebook resumes from the last checkpoint.
+  \item \textbf{Ask while processing.} A document becomes askable at its first pass-2 checkpoint, and answers say which pages they were drawn from
+        (``answered from the first $n$ of $N$ pages''). A 1,000-page PDF was askable 206\,s after upload, with 96 pages indexed, and the answer was correct and cited (run 1).
+\end{itemize}
+
+% =====================================================================
+\section{Retrieval and agent design, and the evidence behind it}
 \renewcommand{\arraystretch}{1.2}
 {\fontsize{8.4}{10.1}\selectfont
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{36mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{52mm}@{}}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{36mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{54mm}@{}}
 \toprule
 \color{navy}Decision & \color{navy}\textbf{Why} & \color{navy}\textbf{Measured effect} \\ \midrule
-Hybrid search + cross-encoder reranker & Dense search finds paraphrases, BM25 finds exact labels and numbers, and the reranker reads question and passage together. & Page recall@5 73.1\% $\to$ 96.2\% (English models) \\
-Table rebuilding & Statistical tables are aligned with spaces, so plain text extraction scrambles rows and columns. & Rows read as \texttt{label | 2025 Q2 = 3.8}. Table questions rose from 42\% to 83\%, helped by better retrieval and table captions \\
-BGE-M3 + multilingual reranker & English-only models miss Hindi and Hinglish wording. & Multilingual set: recall@5 0.94 $\to$ 1.00 and MRR 0.88 $\to$ 0.97, with answer accuracy tied \\
+Hybrid search + cross-encoder reranker & Dense search finds paraphrases, BM25 finds exact labels and numbers, and the reranker reads question and passage together. & Page recall@5 94.2\% (multilingual default; 96.2\% with English-only models); a basic MiniLM search: 73.1\% \\
+Table rebuilding & Statistical tables are aligned with spaces, so plain text extraction scrambles rows and columns. & Table questions rose from 42\% to 83\%, helped by better retrieval and table captions \\
+BGE-M3 + multilingual reranker & English-only models miss Hindi and Hinglish wording. & Multilingual set: recall@5 1.00 and MRR 0.97 (English-only models: 0.94 and 0.88), with answer accuracy tied \\
 Adaptive agent, not an always-on loop & Our first always-on loop was \emph{worse} than a single pass (23 vs 27 of 38): sub-queries crowded out the real evidence. & The loop runs only when needed, with fewer false refusals at similar accuracy \\
-Python calculator & The 7B model subtracts and counts wrong even with the right numbers in view. & Arithmetic is exact and operands are checked against the cited row and column, but numerical questions are still 2/6 \\
-Tesseract CLI OCR at 300 dpi & The built-in OCR path lost about 30\% of the Hindi words on scanned pages. & Hindi word recall 0.70 $\to$ 0.99 and 1.00 \\
+Python calculator + number fixes & The 7B model picked the wrong measure or the wrong table cell, and sometimes subtracted wrong. & Numerical questions 5/6 (2/6 without them); English 84.6\% (76.9\% without them; runs 5--6) \\
+Tesseract CLI OCR at 300 dpi & The built-in OCR path lost about 30\% of the Hindi words on scanned pages. & Hindi word recall 0.99 and 1.00 (built-in OCR: 0.70) \\
 \bottomrule
 \end{tabularx}}
 
-\textbf{Engineering for a free runtime.} The real limit was host RAM, not the GPU: the Ollama runner (the local LLM server, installed in 41\,s on Colab; 96\,s on Kaggle) grew by about 100\,MB per request until Colab killed the session.
-Memory-mapped weights, one request slot, retries and a watchdog that restarts the runner fixed it. In the final run
-the watchdog restarted the runner and no question failed. Parsed documents are cached by file hash, so re-runs skip parsing.
-
-
-% =====================================================================
-% PAGE 3: benchmarks
-% =====================================================================
-\section{Benchmarks}
-\textbf{English set:} 61 hand-written questions over three public PDFs: an ACL 2025 paper (17 pages, two columns),
-a U.S.\ BEA GDP release (28 pages, mostly statistical tables) and NIST AI 600-1 (64 pages). The questions cover seven categories,
-including 9 that the documents cannot answer. A correct answer must contain every required fact and must not refuse.
-\textbf{Multilingual set:} 20 questions over a Hindi article, a Marathi article, a scanned (image-only) Hindi document,
-and the English paper asked in Hindi and Hinglish. Final results: the project notebook run top to bottom on one T4 (Kaggle, 26 Oct, as Colab's free GPU quota was used up).
-
-\vspace{2pt}
+\vspace{4pt}
 \begin{minipage}[t]{0.49\textwidth}
 \subsection{Retrieval: is the evidence page in the top 5?}
 \begin{tikzpicture}
 \begin{axis}[
-    xbar, scale only axis, width=0.50\linewidth, height=52mm, bar width=6.2pt, bar shift=0pt,
+    xbar, scale only axis, width=0.50\linewidth, height=50mm, bar width=6.2pt, bar shift=0pt,
     xmin=50, xmax=106, xtick={50,60,70,80,90,100}, axis x line*=bottom, axis y line*=left,
     xlabel={page recall@5 (\%), 52 answerable questions}, xlabel style={font=\fontsize{7.5}{9}\selectfont,text=muted},
     symbolic y coords={start,minilm,bge,bm25,hybrid,rerank,m3dense,m3rerank},
@@ -284,7 +240,7 @@ and the English paper asked in Hindi and Hinglish. Final results: the project no
 The multilingual default is one question below the English-only reranker here and ranks best at top-1 (68.3\%).}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.47\textwidth}
-\subsection{Answers: end to end (Kaggle T4, 26 Oct)}
+\subsection{Answers end to end (Kaggle T4)}
 \renewcommand{\arraystretch}{1.22}
 {\fontsize{8.4}{10.2}\selectfont
 \begin{tabularx}{\linewidth}{@{}X r r r@{}}
@@ -298,12 +254,33 @@ Citation precision   & 70.6\% & 73.7\% & 78.4\% \\
 Latency, median      & 2.7 s  & 3.2 s  & 6.6 s \\
 \bottomrule
 \end{tabularx}}
-\note{Same 61 questions and LLM in every column. ``Baseline'' is the starting design (MiniLM search, single pass), measured in an earlier T4 run. ``Single pass'' and ``Agent'' use the multilingual retriever.
-``Agent'' is the default (adaptive loop + calculator). 95\% intervals are about $\pm$12 points, so small
-differences between the last two columns are within noise. 27 Oct numerical fixes: 84.6\%.}
+\note{Same 61 English dev questions and LLM in every column. ``Baseline'' is the starting design (MiniLM search, single pass).
+``Agent'' is the default (adaptive loop + calculator). 95\% intervals are about $\pm$12 points, so the last two columns differ within noise.
+The number fixes then raised the agent to 84.6\% (next table).}
+\end{minipage}
 
-\vspace{6pt}
-\subsection{Agent accuracy by question type}
+\vspace{4pt}
+\begin{minipage}[t]{0.49\textwidth}
+\subsection{Number fixes (dev set, runs 5 and 6)}
+\renewcommand{\arraystretch}{1.2}
+{\fontsize{8.4}{10.2}\selectfont
+\begin{tabularx}{\linewidth}{@{}X r r@{}}
+\toprule
+English dev set & Without the fixes & \textbf{With them (default)} \\ \midrule
+Answer accuracy (52 answerable) & 76.9\% & \textbf{84.6\%} \\
+95\% bootstrap interval & 63.5--88.5 & 73.1--94.2 \\
+Numerical questions & 2/6 & 5/6 \\
+Table questions & 10/12 & 11/12 \\
+False refusals & 1.9\% & 0\% \\
+Answer latency p50 / p95 & 6.7 / 22.1 s & 6.5 / 21.8 s \\
+\bottomrule
+\end{tabularx}}
+\note{The six numerical failures picked the wrong measure (a percent change for a dollar amount) or the wrong cell of the right table; the arithmetic was never wrong.
+Three fixes: cell alignment, measure-aware retrieval and date candidates. The same four questions were fixed in both runs and none was lost.
+The intervals overlap, so four questions is too few to rule out chance on its own.}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.47\textwidth}
+\subsection{Accuracy by question type (run 6)}
 \begin{tikzpicture}
 \begin{axis}[
     xbar, scale only axis, width=0.56\linewidth, height=36mm, bar width=5.6pt,
@@ -316,65 +293,158 @@ differences between the last two columns are within noise. 27 Oct numerical fixe
     nodes near coords, nodes near coords style={font=\fontsize{7.4}{9}\selectfont},
     point meta=explicit symbolic, enlarge y limits=0.1,
     axis line style={draw=rule}, major tick length=0pt]
-  \addplot[fill=navy!80,draw=none] coordinates {(100,fact)[100] (100,def)[100] (83,table)[83] (67,comp)[67] (56,multi)[56] (33,num)[33] (100,unans)[100]};
+  \addplot[fill=navy!80,draw=none] coordinates {(100,fact)[100] (100,def)[100] (92,table)[92] (67,comp)[67] (56,multi)[56] (83,num)[83] (100,unans)[100]};
 \end{axis}
-\end{tikzpicture}
+\end{tikzpicture}\par
+\note{Percent correct, English dev set, current default. Multi-hop (5/9) is the weakest category.}
 \end{minipage}
 
-\vspace{4pt}
-\begin{minipage}[t]{0.49\textwidth}
-\subsection{Multilingual and scanned pages}
-\renewcommand{\arraystretch}{1.2}
-{\fontsize{8.4}{10.2}\selectfont
-\begin{tabularx}{\linewidth}{@{}X r r@{}}
-\toprule
-Question slice & \textbf{n} & \textbf{Correct} \\ \midrule
-Hindi questions (8 answerable, 2 scanned) & 9 & 7/8 \\
-Hinglish questions & 3 & 3/3 \\
-Marathi questions (3 answerable) & 4 & 3/3 \\
-English questions about Hindi/Marathi docs & 4 & 3/4 \\
-Unanswerable, correctly refused & 2 & 2/2 \\ \midrule
-\textbf{All answerable} & 18 & \textbf{16/18 (88.9\%)} \\
-\bottomrule
-\end{tabularx}}
-\note{Answers come back in the question's language. The previous run of the same code scored 17/18, with both scanned-page (OCR)
-questions correct. English-only models also score 16/18 but retrieve worse (recall@5 0.94 vs 1.00).}
-\end{minipage}\hfill
+\vspace{3pt}
+\textbf{How far the verifier can be trusted.} In run 6, 37 of the 40 answers the verifier marked supported were correct, and 7 of the 12 it marked unsupported were correct.
+A ``verified'' label is a strong signal; an ``unsupported'' label is a weak one, which is why an unsupported answer triggers another round instead of being discarded.
+
+% =====================================================================
+\section{Many languages and scanned pages}
+BGE-M3 places 100+ languages in one vector space and the reranker is multilingual, so a Hindi question can find an English passage. BM25 uses a Unicode tokenizer that keeps
+Indic vowel signs inside words (a plain \texttt{\textbackslash w+} splits ``\textit{nirman}'' at every vowel sign). When the question's script differs from the document's, or the question is Hinglish,
+one LLM call translates it into the document's language. The answer is written in the question's language and script, or in the one the user picks, and ``not found'' is written in about 30 languages.
+
 \begin{minipage}[t]{0.47\textwidth}
-\subsection{Resources on a single T4 (Kaggle, 26 Oct)}
 \renewcommand{\arraystretch}{1.2}
 {\fontsize{8.4}{10.2}\selectfont
 \begin{tabularx}{\linewidth}{@{}X r@{}}
 \toprule
-GPU memory in use, all three models loaded & 8.9 / 15.0 GB \\
-Ollama install + 4.7 GB model download & 3.8 min \\
-Ingest a 17-page paper (first time, cached after) & 8.5 s \\
-Scanned 2-page Hindi document, with OCR & 16 s \\
-Retrieval ablation, 7 configurations & 1.9 min \\
-English answers, 2 configurations $\times$ 61 & 14.3 min \\
-Multilingual answers, 2 configurations $\times$ 20 & 7.4 min \\
-Offline test suite (current code) & 845 tests \\
+Question slice (dev set, run 8) & \textbf{Correct} \\ \midrule
+Hindi questions (incl.\ scanned pages) & 8/8 \\
+Hinglish questions & 3/3 \\
+Marathi questions & 3/3 \\
+English questions about Hindi/Marathi documents & 3/4 \\
+Unanswerable, correctly refused & 2/2 \\ \midrule
+\textbf{All answerable} & \textbf{17/18 (94.4\%)} \\
 \bottomrule
 \end{tabularx}}
-\end{minipage}
-
-\vspace{6pt}
-\subsection{What an answer looks like}
-\begin{minipage}[c]{0.66\textwidth}
-\begin{tcolorbox}[enhanced,colback=white,colframe=rule,boxrule=0.6pt,arc=3pt,left=0pt,right=0pt,top=0pt,bottom=0pt]
-\includegraphics[width=\linewidth]{figures/answer_hindi.png}
-\end{tcolorbox}
+\note{20 questions over a Hindi article, a Marathi article, a scanned (image-only) Hindi document, and the English paper asked in Hindi and Hinglish.
+Across runs of the same code the score was 16/18 or 17/18 (88.9--94.4\%); in run 6 the question that changed was the scanned Hindi one.
+One answerable multilingual question was refused (1/18 false refusals).}
 \end{minipage}\hfill
-\begin{minipage}[c]{0.31\textwidth}
-\note{Screenshot from the T4 run. A Hindi question about the English paper (``Which dataset did the authors repurpose?'')
-is answered in Hindi. The answer names Re-DocRED, cites pages 2 and 3, and the verifier marks every claim as supported.
-The quoted sources are the passages the citations point to.}
+\begin{minipage}[t]{0.49\textwidth}
+\vspace{0pt}
+\begin{tcolorbox}[enhanced,colback=white,colframe=rule,boxrule=0.6pt,arc=3pt,left=0pt,right=0pt,top=0pt,bottom=0pt]
+\includegraphics[width=\linewidth]{answer_lang.png}
+\end{tcolorbox}
+\note{An English question about the 9/11 Report with Bengali picked in the app's Answer-in menu, on a free Colab T4: ``the USS Cole was attacked on October 12, 2000'', citing page 208, verified.}
 \end{minipage}
 
-\subsection{Long documents (100 to 10,000 pages)}
+\vspace{4pt}
+\textbf{22 languages (run 11).} A second set asks what users actually ask: 22 Wikipedia articles, one per language
+(Hindi, Marathi, Sanskrit, Nepali, Bhojpuri, Awadhi, Maithili, Urdu, Bengali, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi,
+Odia, English, French, Arabic, Chinese, Japanese, Russian), 14 scanned copies and 122 questions in 24 question languages, on a Kaggle
+T4 x2. The system names the answer language from the question (script, then short word lists inside shared scripts), follows
+``answer in Urdu'' requests and the app's Answer-in menu, writes and checks the answer in the book's language and then translates it,
+tokenizes every script for keyword search, translates the question into each document script of a mixed library, keeps a passage
+slot for a second matching book, picks OCR packs from Tesseract's script detection, and names the book of each citation.
+
+\begin{minipage}[t]{0.56\textwidth}
+\renewcommand{\arraystretch}{1.15}
+{\fontsize{8.2}{10}\selectfont
+\begin{tabularx}{\linewidth}{@{}X r@{}}
+\toprule
+Kind of question (dev set) & \textbf{Correct} \\ \midrule
+In the document's language & 21/21 \\
+English, about a non-English document & 16/20 \\
+Another non-English language (Telugu on Sanskrit, ...) & 12/21 \\
+``Answer in X'' request: correct / in that language & 7/8 / 7/8 \\
+All 22 books searched at once: correct / right book & 19/21 / 21/21 \\
+Two books in different languages: correct / both cited & 1/6 / 3/6 \\
+Scanned copy (OCR) & 9/14 \\
+Not in the document, refused & 9/11 \\ \midrule
+\textbf{All answerable} & \textbf{85/111} \\
+Answer in the right script (all 122) & \textbf{117/122} \\
+\bottomrule
+\end{tabularx}}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.41\textwidth}
+\vspace{0pt}
+\note{Two sealed held-out sets, each run once: ten documents (Hindi, Marathi, Nepali, Awadhi, Maithili, Bengali, Kannada, Malayalam,
+Odia, Japanese, four scanned) \textbf{33/44} correct, 47/48 in the right script; six documents (Sanskrit, Bhojpuri, Urdu, Telugu,
+Tamil, French) \textbf{18/20}. English 45/52 and Hindi/Marathi 17/18 with the multi-language code (run 10). Weakest: a question in a
+different non-English language from the book (12/21) and two-book questions (1/6), both limited by the 7B model: on the same
+questions Gemma-3-12B scored 101/111 (19/21, 5/6) but refused only 6/11 unanswerable ones.}
+\end{minipage}
+
+% =====================================================================
+\section{Local AI models used, and how they were chosen}
+\renewcommand{\arraystretch}{1.18}
+{\fontsize{8.4}{10.2}\selectfont
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{44mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{42mm}@{}}
+\toprule
+\color{navy}Model (all open weights, run locally) & \color{navy}\textbf{Role} & \color{navy}\textbf{Size on the T4} \\ \midrule
+Qwen2.5-7B-Instruct, 4-bit (Q4\_K\_M), Ollama, 8k context & Answers, follow-up rewriting, translation, sub-question planning, evidence grading, claim verification, calculator operands & 4.7 GB download; about 5.5--6 GB GPU memory with its cache \\
+BAAI/bge-m3 (fp16) & Dense embeddings for meaning search, 100+ languages & about 1.1 GB \\
+BAAI/bge-reranker-v2-m3 (fp16) & Cross-encoder reranker, multilingual & about 1.1 GB \\
+BM25 (built in, Unicode-aware) & Keyword search, fused with BGE-M3 by reciprocal rank fusion & CPU, sparse matrix on disk \\
+Tesseract OCR (pack chosen from each page's script) & Text from scanned pages & CPU \\
+PyMuPDF layout / table model (ONNX) & Table detection; optionally on the GPU (1.89$\times$ faster, same output) & CPU or GPU \\
+\bottomrule
+\end{tabularx}}
+
+\subsection{Choosing the answer model (run 8, dev sets only)}
+The same pipeline was run five times on one T4, changing only the answer model: same retriever, reranker, prompts and default agent.
+\renewcommand{\arraystretch}{1.2}
+{\fontsize{8.3}{10}\selectfont
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X r r r r r r@{}}
+\toprule
+Answer model (4-bit) & \shortstack[r]{\textbf{English}\\\textbf{correct}} & \shortstack[r]{\textbf{Unanswerable}\\\textbf{refused}} & \shortstack[r]{\textbf{False refusals}\\\textbf{EN / ML}} & \shortstack[r]{\textbf{Latency}\\\textbf{p50 / p95}} & \shortstack[r]{\textbf{Multilingual}\\\textbf{correct}} & \shortstack[r]{\textbf{Peak GPU}\\\textbf{memory}} \\ \midrule
+\textbf{Qwen2.5-7B-Instruct (chosen)} & \textbf{44/52} & \textbf{9/9} & \textbf{0} / 1 & \textbf{6.9 / 29.9 s} & \textbf{17/18} & 9,345 MiB \\
+Llama-3.1-8B & 44/52 & 6/9 & 0 / 0 & 15.0 / 36.0 s & 17/18 & 10,103 MiB \\
+Gemma-2-9B & 44/52 & 9/9 & 1 / 0 & 10.7 / 33.5 s & 17/18 & 12,045 MiB \\
+Mistral-7B-Instruct & 39/52 & 9/9 & 3 / 2 & 9.8 / 28.6 s & 12/18 & 9,799 MiB \\
+Qwen2.5-3B-Instruct & 29/52 & 8/9 & 5 / 2 & 5.3 / 14.3 s & 11/18 & 6,731 MiB \\
+\bottomrule
+\end{tabularx}}
+\note{English: 52 answerable + 9 unanswerable questions; multilingual: 18 + 2. Peak GPU memory includes BGE-M3 and the reranker.
+Qwen2.5-7B, Llama-3.1-8B and Gemma-2-9B tie on English accuracy. Qwen is kept because it refuses every unanswerable question in both sets (Llama answered 3 of the 9 English ones,
+Gemma 1 of the 2 multilingual ones), has no false refusals in English, uses the least memory of the three and is the fastest. Gemma's citations were more precise (0.882 vs 0.817).
+The prompts were developed with Qwen, which may favour it, and one question is 1.9 points, so differences of one to three questions are within noise.}
+
+\textbf{Other alternatives measured and rejected.} Retrieval: MiniLM, bge-base-en, BM25 alone, English hybrid and BGE-M3 dense alone (chart above).
+Reranker: none, bge-reranker-base (English) and v2-m3; v2-m3 keeps English quality and lifts multilingual recall@5 from 0.94 to 1.00. OCR: PyMuPDF's built-in OCR vs Tesseract (Hindi word recall 0.70 vs 0.99).
+Table detection: a faster line-only detector invented tables in academic papers, so it stays off. Agent: single pass, always-on loop and adaptive; the always-on loop was worse than a single pass.
+
+% =====================================================================
+\section{Evaluation}
+\textbf{Dev set (used during development).} English: 61 questions over three public PDFs, an ACL 2025 paper (17 pages, two columns), a U.S.\ BEA GDP release
+(28 pages, 18 whitespace-aligned tables) and NIST AI 600-1 (64 pages), in seven categories including 9 the documents cannot answer. A validator checks that every
+required fact appears on its cited page; a correct answer must contain every required fact and must not refuse. Multilingual: the 20 Hindi/Marathi questions and the 122-question, 22-language set of Section 5 (with a sealed 20-question held-out set).
+\textbf{Held-out sets.} Questions written independently of the system by authors who read only the official sources, each document used exactly once and never re-run.
+
+\renewcommand{\arraystretch}{1.2}
+{\fontsize{8.4}{10.2}\selectfont
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X r r r >{\raggedright\arraybackslash}p{48mm}@{}}
+\toprule
+Set & \textbf{Pages} & \shortstack[r]{\textbf{Answerable}\\\textbf{correct}} & \shortstack[r]{\textbf{Unanswerable}\\\textbf{refused}} & \textbf{Notes} \\ \midrule
+English dev set (runs 6 and 8) & 17--64 & \textbf{44/52} & 9/9 & 95\% interval 73.1--94.2\%; recall@5 94.2\% \\
+\quad same questions, \textbf{no documents} (run 7) & -- & 1/52 & 9/9 & 46 of 52 declined; the one hit is a definition \\
+Multilingual dev set (run 8) & -- & 17/18 & 2/2 & Hindi, Hinglish, Marathi, scanned Hindi \\ \midrule
+\textbf{Held out:} GAO Cost Estimating Guide (run 7) & 476 & \textbf{15/18} & 2/4 & recall@5 1.000, citation precision 0.792, p50 5.4 s \\
+\textbf{Held out:} US Code Title 21 (run 3) & -- & \textbf{19/25} & 4/5 & recall@5 0.917; questions naming a section 8/9 \\
+\textbf{Held out:} CAG Hindi GST audit report (run 3) & 190 & \textbf{9/14} & 2/4 & answers only; Hindi 6/7, Hinglish 2/3, English 1/4 \\ \midrule
+Real documents, 46 independent questions (not held out) & 585--4,211 & 30/37 & 6/9 & second run; three fixes were informed by the first \\
+\bottomrule
+\end{tabularx}}
+\note{The GAO, Title 21 and Hindi audit sets were measured with the current answer path; the GAO run includes the number fixes. The real-document set (9/11 Report, Statistical Abstract,
+US Code Title 26) was run twice and three fixes were designed from its first-run failures, so it is reported apart from the held-out sets. The CAG set's unanswerable questions were checked against the executive summary only.}
+
+\textbf{Do the number fixes carry over?} They were tuned on the English dev set, so run 7 compared the old and new defaults on the synthetic 100- and 250-page documents (same session):
+27/36 $\to$ 26/36 and 26/36 $\to$ 26/36. Numeric and table-cell questions were identical; the one difference is a section-scoped question that only the old default answered.
+Outside the dev set the fixes showed no measurable gain or loss.
+
+% =====================================================================
+\section{Scale and robustness}
 A fictional statistical compendium was generated at six sizes (ruled tables on 58\% of pages, two-column pages, footnotes, about 1.5\% scanned pages)
-with 40 independently written questions per size, each fact planted at a known page. \textbf{This synthetic corpus shows how the system scales,
+with 40 independently written questions per size, each fact planted at a known page. \textbf{This corpus shows how the system scales,
 not how accurate it is on real documents:} its prose is template text, and the same questions are used at every size so that sizes can be compared.
+
 \renewcommand{\arraystretch}{1.18}
 {\fontsize{8.4}{10.2}\selectfont
 \begin{tabularx}{\textwidth}{@{}*{7}{>{\raggedleft\arraybackslash}X}@{}}
@@ -388,115 +458,110 @@ not how accurate it is on real documents:} its prose is template text, and the s
 10,000 & 36.9 min & 71.3 min & 0.889 & 0.722 & 6.0 s & 189 MB \\
 \bottomrule
 \end{tabularx}}
-\note{Kaggle T4, final code, 27 Oct (run 4), 2 parse workers (the free-Colab CPU count). CPU column: the 26 Oct run, with identical recall and accuracy at every size.
-Accuracy is on the 36 answerable questions per size. Peak RAM up to 9.4 GB; at every size a killed parse worker cost one page and an interrupted job resumed from its checkpoint.}
-\vspace{3pt}
+\note{Kaggle T4, run 4, 2 parse workers (the free-Colab CPU count). CPU column: an earlier run, with identical recall and accuracy at every size.
+Accuracy is on the 36 answerable questions per size. Peak RAM 5.6--9.4 GB. Retrieval GPU memory stayed at 2.4 GB at every size.}
 
+\vspace{2pt}
 \begin{minipage}[t]{0.52\textwidth}
-\textbf{Real documents} \enspace {\color{muted}\fontsize{8}{10}\selectfont (46 independent questions, Kaggle T4; 26 Oct runs v2--v4 and the final run, 27 Oct)}\par\vspace{2pt}
+\textbf{Real long documents} \enspace {\color{muted}\fontsize{8}{10}\selectfont (Kaggle T4)}\par\vspace{2pt}
 \renewcommand{\arraystretch}{1.18}
 {\fontsize{8.2}{10}\selectfont
 \begin{tabularx}{\linewidth}{@{}X r r r r@{}}
 \toprule
  & \textbf{Pages} & \textbf{Ingest} & \shortstack[r]{\textbf{Answerable}\\\textbf{correct}} & \shortstack[r]{\textbf{Unanswerable}\\\textbf{refused}} \\ \midrule
-9/11 Report & 585 & 46 s & 11/12 $\to$ \textbf{12/12} & 1/3 \\
-Stat. Abstract & 940 & 15.7 min & 9/13 $\to$ \textbf{11/13} & 3/3 \\
-US Code T26 & 4,211 & 11.7 min & 6/12 $\to$ \textbf{7/12} & 2/3 \\
+9/11 Report & 585 & 46 s & \textbf{12/12} & 1/3 \\
+Stat. Abstract & 940 & 15.7 min & \textbf{11/13} & 3/3 \\
+US Code T26 & 4,211 & 11.7 min & \textbf{7/12} & 2/3 \\
 \midrule
-\textbf{Total} & & & \textbf{30/37} (was 26) & 6/9 \\
+\textbf{Total} & & & \textbf{30/37} & 6/9 \\
 \bottomrule
 \end{tabularx}}
-\note{Before $\to$ final run (27 Oct; GPU table detection, one document at a time). Earlier ingest (26 Oct): 61 s, 23.8 min, 15.5 min, with CPU table detection and two documents at once, so contention is included.
-Title 26's 7/12 equals run 2 (the section fix was designed on this set, so not held out). Budget Appendix (no questions): 24.0 min (33.9 before).}
+\note{GPU table detection, one document at a time. This set was used twice, so it is not held out. On US Code Title 26, recording each chunk's section number finds 1,877 sections (355 without it), page recall@5 0.92 (0.75).}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.44\textwidth}
 \fontsize{8.7}{10.6}\selectfont
-\textbf{Recovery.} \enspace At every size, a parse worker was killed on one page and the job was cancelled half-way, then restarted (Kaggle T4, 26 Oct).
+\textbf{Recovery.} \enspace At every size, a parse worker was killed on one page and the job was cancelled half-way, then restarted.
 Each time the crash cost exactly that one page, the job resumed from its checkpoint, and the index matched a clean run. At 10,000 pages the interrupted job took
-4,338 s against 4,279 s clean (+1.4\%).\par\vspace{3pt}
-\textbf{Several users.} \enspace The real web server, two answers at a time, on the 1,000-page document with 1, 2, 4 and 8 users (Kaggle T4, 26 Oct, 3 questions per user): 0 failed requests of 45.
-Throughput saturates at about 10.5 answers per minute. Median latency rises from 12.8\,s (1 user) to 44.6\,s (8 users) as users wait in a visible queue.
+4,338\,s against 4,279\,s clean (+1.4\%).\par\vspace{3pt}
+\textbf{Several users.} \enspace The real web server, two answers at a time, on the 1,000-page document with 1, 2, 4 and 8 users (3 questions each): 0 failed requests of 45.
+Throughput saturates at about 10.5 answers per minute; median latency rises from 12.8\,s (1 user) to 44.6\,s (8 users) as users wait in a visible queue.
+First words of an answer appear after 0.47\,s (median, 1 user) and 0.70\,s (2 users).\par\vspace{3pt}
+\textbf{Free-runtime memory.} \enspace Host RAM, not GPU memory, was the real limit: the Ollama runner grew by about 100\,MB per request until Colab killed the session.
+Memory-mapped weights, one request slot, retries and a watchdog that restarts the runner fixed it; in the final notebook run the watchdog restarted it 5 times and no question failed.
 \end{minipage}
 
 % =====================================================================
-% PAGE 5: progress, latest pass, limitations, next steps
+\section{The web app and security}
+The web app (FastAPI and an offline single-page frontend) puts the pipeline behind a document library:
+\begin{itemize}
+  \item \textbf{Library.} Uploads stream to disk with a PDF check and a size limit; a background queue shows live progress; documents left mid-way when the server stopped resume from their checkpoint at start-up.
+        Several documents can be ticked and asked together; deleting a document removes its file, parsed pages and index.
+  \item \textbf{Answers.} Text streams word by word, labelled as an unchecked draft until the checked, cited answer replaces it. Each citation opens the page rendered by PyMuPDF with the cited passage highlighted,
+        and a trace shows every agent step.
+  \item \textbf{Several users.} At most two answers run at once (configurable); others wait in a first-come queue and see their place.
+  \item \textbf{Access control.} An optional access token (Bearer header or HttpOnly session cookie), one upload per client IP at a time and an optional daily upload quota.
+        Every \texttt{/api} route except the health check needs the token when it is set.
+  \item \textbf{Honest messages.} An audit of 25 user-visible messages fixed 12 that could mislead, for example ``verified'' shown before the check had finished, or an over-quota upload shown as ``connection closed''.
+        An independent code review of the web-app and scale changes found 10 issues; 9 were fixed with regression tests (races in the partial index, quota bypasses, event order).
+  \item \textbf{Tests.} 879 offline unit tests (models faked) and lint pass; CI runs them on Python 3.10 and 3.12.
+\end{itemize}
+
 % =====================================================================
-\section{What was delivered}
-{\fontsize{8.7}{10.8}\selectfont
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.485\textwidth} >{\raggedright\arraybackslash}X@{}}
-\multicolumn{2}{@{}l}{\kicker{Built and measured on the GPU (Kaggle T4, 26 Oct)}}\\[2pt]
-\begin{itemize}[label=\done,leftmargin=14pt]
-  \item Ingestion of 100 to 10,000 pages: two-pass stream, checkpoints, crash-isolated workers, on-disk index
-  \item Web app: library, background queue, citations that open the highlighted page; 0 failures with 1 to 8 users
-  \item Hybrid retrieval with reranking; adaptive agent with verifier and calculator
-  \item Hindi, Hinglish, Marathi and scanned pages (OCR)
+\section{Deployment and requirements}
+\begin{itemize}
+  \item \textbf{GPU.} One NVIDIA GPU with 16 GB, tested on a Tesla T4 (free Colab and Kaggle). All three models loaded use 8.9 of 15 GB.
+  \item \textbf{Host RAM.} The free Colab T4's 12.7 GB is enough; the peak was 9.4 GB during GPU table detection on the 10,000-page PDF.
+  \item \textbf{Downloads.} One-time model download: about 4.7 GB for Qwen2.5-7B and about 4.5 GB for BGE-M3 and the reranker. No internet is needed afterwards.
+  \item \textbf{Notebook.} \texttt{notebooks/Local\_Agentic\_RAG.ipynb} ran top to bottom on a T4 in 32.7 min with no errors, every benchmark included, and on a fresh free Colab T4.
+  \item \textbf{Docker.} \texttt{docker compose up -{}-build} for a GPU machine. The image was built and an install smoke test passed with the real model on a CPU host;
+        GPU inside Docker was not tested, because the T4 notebooks cannot run Docker. The CPU-only compose file works for light use: a one-page PDF took 40\,s from upload to a cited answer on a 16-core laptop CPU.
 \end{itemize}
-&
-\begin{itemize}[label=\done,leftmargin=14pt]
-  \item Page references in questions (``page 4,512''): such pages now rank 3 to 4 instead of 87 to 895 before reranking
-  \item Independent evaluation: 240 synthetic and 46 real-document questions written by a separate author
-  \item Notebook runs top to bottom in 32.7 min with no errors
-  \item Access token and upload limits; 845 offline tests
+
+% =====================================================================
+\section{Limitations}
+\begin{itemize}
+  \item \textbf{Multi-hop questions} that combine facts from several pages are the weakest category (5/9 on the English dev set).
+  \item \textbf{Questions that presuppose something absent} (an act passed after the report) are sometimes answered from the nearest passage:
+        6 of 9 unanswerable real-document questions were refused, and 2 of 4 on both the GAO and Hindi audit held-out sets. A stricter refusal rule raised false refusals from 3.8\% to 21.2\%, so it was not kept.
+  \item \textbf{The number fixes} raised numerical questions to 5/6 on the English dev set they were tuned on, but showed no measurable gain on synthetic documents they were not tuned on (run 7).
+  \item \textbf{Multilingual false refusal.} Qwen2.5-7B refused 1 of the 18 answerable multilingual questions; Llama-3.1-8B and Gemma-2-9B refused none (run 8).
+  \item \textbf{Small benchmarks.} 61 English and 20 multilingual dev questions from one annotator; held-out sets of 18, 25 and 14 answerable questions. Grading matches required facts and can miss a paraphrase.
+        95\% intervals are about $\pm$10--12 points. The real documents are four US federal PDFs and one Indian audit report.
+  \item \textbf{Ingestion of table-heavy PDFs is slow on 2 CPUs:} 2.3 to 2.9 pages/s, so 10,000 pages take about 71 min (36.9 min with the opt-in GPU table detection).
+  \item \textbf{Document titles from PDF metadata.} The 9/11 Report's metadata title is a print-job name (``201-635.job''), and the library shows it; the title guesser does not yet treat it as junk.
+  \item \textbf{Coverage.} OCR was measured on one 2-page Hindi scan; charts and figures are not interpreted; Hindi and Marathi are not told apart by script detection.
+  \item \textbf{Shared use.} The access token has no rate limit on guesses, and users behind one proxy share one upload slot. GPU inside Docker is untested.
 \end{itemize}
+
+\section{Future work}
+Cell-level table retrieval and a better multi-hop strategy; a larger model such as Qwen2.5-14B for number extraction only (whether it fits beside the other models is not yet measured);
+junk-title detection for PDF metadata; the section fix checked on more legal codes; a larger, multi-annotator benchmark with Hindi and Marathi long documents; rate limiting before any use
+beyond one trusted group.
+
+% =====================================================================
+\section{Reproducibility}
+Every number in this report was read from a run on a T4. The files \texttt{docs/RESULTS.md}, \texttt{docs/SCALE.md} and \texttt{docs/STATUS.md} record each one with its run and code snapshot.
+The GPU runs were Kaggle notebooks (T4) and free Colab sessions (T4):\par
+\renewcommand{\arraystretch}{1.15}
+{\fontsize{8.3}{10}\selectfont
+\begin{tabularx}{\textwidth}{@{}p{22mm} >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Runs} & \textbf{What was run} \\ \midrule
+Colab runs & Project notebook top to bottom on a fresh Colab T4; end-to-end answer and multilingual benchmarks \\
+Validation, scale v1--v4, run 1 & Notebook top to bottom on a Kaggle T4 (32.7 min); scale benchmark 100--10,000 pages with recovery and load test; real long documents; streaming and asking while processing \\
+Runs 2--4 & Section numbers and the layout model on the GPU (run 2); run 3, the final run (real documents, held-out Title 21 and Hindi audit, regression); run 4 (six scale tiers) \\
+Runs 5 and 6 & Number fixes, one flag at a time, and the previous vs the current default in one session \\
+Runs 7 and 8 & No-document control, GAO held-out set, number-fix carry-over (run 7); five answer models (run 8); demo recording on a free Colab T4 \\
+Runs 9--11 & 22 languages: development set, the two sealed held-out sets, and Qwen3-8B and Gemma-3-12B on the same questions \\
+\bottomrule
 \end{tabularx}}
 
 \vspace{3pt}
-\kicker{New this week: measured on the GPU}\par\vspace{2pt}
-\renewcommand{\arraystretch}{1.2}
-{\fontsize{8.5}{10.3}\selectfont
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{37mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{50mm}@{}}
-\toprule
-\color{navy}Feature & \color{navy}\textbf{What exists} & \color{navy}\textbf{Measured on a T4} \\ \midrule
-\done\ Token streaming & Ollama streaming, batched server events; demo server sends queued, started, steps, tokens, answer & First words after 0.47\,s median with 1 user, 0.70\,s with 2 (T4, 26 Oct) \\
-\done\ Ask while processing & Askable after the first indexed batch; final index byte-identical with or without partial queries (test) & 1,000-page PDF askable 206\,s after upload (96 pages indexed); answer correct and cited (T4, 26 Oct) \\
-\done\ ``Which table'' naming & Appends the cited table's printed number when the answer omits it; no prompt change & Statistical Abstract ``which table'' questions 5/6 correct (T4, 27 Oct) \\
-\done\ Layout model on the GPU & Opt-in setting for table-heavy PDFs (about 80\% of ingestion time) & 1,000-page PDF: 119.0\,s, not 224.7\,s (1.89$\times$), same output. Stat. Abstract parse 8.7\,min (17.5\,min on CPU, two documents at once) \\
-\done\ Final re-run of the 46 real questions & Run once more at the end, after the fixes above & 30/37 answerable correct (26/37 before), 6/9 unanswerable refused (T4, 27 Oct) \\
-\bottomrule
-\end{tabularx}}
-\note{Docker image built; install smoke test passed with the real model on a CPU host (27 Oct); GPU in Docker not yet tested. CI passes.}
-
-\newpage
-\subsection{Latest improvements: before and after}
-We analysed every failed question, fixed only what the evidence pointed to, added regression tests for each fix, and measured
-every change on the GPU before keeping it.
-\vspace{2pt}
-
-\renewcommand{\arraystretch}{1.22}
-{\fontsize{8.5}{10.3}\selectfont
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash\bfseries}p{34mm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{54mm}@{}}
-\toprule
-\color{navy}Change & \color{navy}\textbf{Evidence that it was needed} & \color{navy}\textbf{Before $\to$ after} \\ \midrule
-OCR through the Tesseract CLI & One of the two scanned-page questions failed because the OCR text had lost words & Word recall 0.70 $\to$ 0.99 and 1.00. Scanned-page questions 1/2 $\to$ 2/2 \\
-Refusal detection & An unanswerable question got a cited ``the document does not say\ldots'' that was scored as an answer & Unanswerable refused 8/9 $\to$ 9/9 \\
-Calculator grounding & It took operands from the wrong table row and overrode a stated ``+\$6.8 billion'' & English 73.1\% $\to$ 75.0\%. Numerical questions still 2/6 \\
-Cited answers ending in ``not found'' & A correct, cited Hindi answer followed by the marker was scored as a refusal & Multilingual 83.3\% $\to$ 94.4\% in that run \\
-Table captions and section labels & Look-alike arXiv tables could not be told apart. BEA rows carried the previous table's title & English 75.0\% $\to$ 76.9\%. Table questions 9/12 $\to$ 10/12. One BEA question now ranks lower \\
-\bottomrule
-\end{tabularx}}
-\note{One change made results worse and was reverted: a stricter ``refuse unless the exact fact is present'' prompt rule raised false refusals from
-3.8\% to 21.2\% in a single-pass run. Net effect of this week's changes on the English set: 73.1\% $\to$ 76.9\% (four questions fixed, two regressed).}
-
-\section{Limitations}
+To reproduce (held-out sets are not re-run: each was used once):
 \begin{itemize}
-  \item \textbf{Ingestion of table-heavy PDFs is slow on 2 CPUs:} 2.3 to 2.9 pages/s, so 10,000 pages take about 71 min and the 1,224-page Budget Appendix 34 min (37 min for 10,000 pages with the opt-in GPU table detection).
-        The table model is about 80\% of that. A faster line-only detector invented tables in academic papers, so it stays off.
-  \item \textbf{Section questions on long legal codes.} On the US Code (Title 26) a bold section heading was directly followed by a bold sub-heading and chunks kept only
-        the latest, so only 355 sections were identified. Each chunk now records its section number: 1,877 sections, page recall@5 0.75 $\to$ 0.92, answerable 6/12 $\to$ 7/12
-        (run 2; not held out, the fix was designed on this set). \S164, \S4081, \S6501 and \S7203 are now correct; 5 of 12 are still wrong (numeric, multi-hop, a definition).
-        On a new legal code (US Code Title 21; held-out questions, single use, 27 Oct) 19/25 answerable are correct, 4/5 unanswerable refused, page recall@5 0.917, and 8 of the 9 questions naming a section are correct.
-  \item \textbf{Questions that presuppose something absent} (an act passed after the report) are sometimes answered from the nearest passage:
-        6 of 9 unanswerable real-document questions were refused. A stricter refusal rule raised false refusals from 3.8\% to 21.2\%, so it was not kept.
-  \item \textbf{Small benchmarks.} 61 English and 20 multilingual questions from one annotator; 46 real-document questions; grading matches required facts and can miss a paraphrase.
-        The synthetic corpus is template prose, and the real documents are four US federal PDFs.
-  \item \textbf{Numerical questions} remain the weakest category (2/6): the 7B model often picks a number from the wrong row or column of a dense table.
-  \item \textbf{Coverage.} Hindi, Hinglish and Marathi were measured on 20 questions; OCR on one 2-page scan; charts and figures are not interpreted.
-  \item \textbf{Shared use.} The token has no rate limit on guesses, and users behind a proxy share one upload slot. The phone layout was checked at 390\,px in an emulated phone browser, not on a real phone.
+  \item \texttt{python benchmark/fetch\_pdfs.py}, then \texttt{python -m local\_agentic\_rag.bench retrieval}
+  \item \texttt{python -m local\_agentic\_rag.bench answer -{}-llm ollama:qwen2.5:7b-instruct}
+  \item long documents: \texttt{python benchmark/scale/run\_scale.py}; offline tests: \texttt{pytest -q}
 \end{itemize}
-
-\section{Next steps}
-After the hackathon: cell-level table retrieval and a larger model (Qwen2.5-14B fits the measured headroom) for number extraction only; check the section
-fix on more legal codes; a larger multi-annotator benchmark with an LLM judge, including Hindi and Marathi long documents; rate limiting before any use
-beyond one trusted group.
 
 \end{document}
