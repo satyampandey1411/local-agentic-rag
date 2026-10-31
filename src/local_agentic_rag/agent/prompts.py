@@ -55,6 +55,21 @@ TRANSLATE_SCHEMA = {
     "required": ["translation"],
 }
 
+TRANSLATE_ANSWER_SYSTEM = "You translate short answers between languages accurately."
+
+TRANSLATE_ANSWER_USER = """Translate this answer from {source} into {target}.
+
+Rules:
+- Translate the meaning faithfully. Do not add, drop or change any fact.
+- Keep every citation marker such as [1] or [2][3] exactly, right after the sentence it belongs to.
+- Keep numbers as digits. Write names in the script of the target language.
+- Reply with the translation only.
+
+Answer in {source}:
+{answer}
+
+Translation:"""
+
 # --------------------------------------------------------------------------- grader
 
 GRADE_SYSTEM = "You judge whether retrieved document passages contain the information needed to answer a question."

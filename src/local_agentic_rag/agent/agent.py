@@ -70,6 +70,8 @@ History = list[tuple[str, str]]
 
 #: Most translated search queries per question (one per document script it does not share).
 MAX_TRANSLATIONS = 3
+#: Documents considered when choosing which scripts to translate a question into.
+LIKELY_DOCUMENTS = 3
 
 
 class AgenticRAG:
@@ -87,8 +89,13 @@ class AgenticRAG:
         history: History | None = None,
         on_step: Callable[[TraceStep], None] | None = None,
         on_token: Callable[[dict[str, Any]], None] | None = None,
+        answer_language: str | None = None,
     ) -> Answer:
         """Answer ``question``.
+
+        ``answer_language`` is the user's explicit choice from the app's "Answer in" menu
+        (one of ``lang.ANSWER_LANGUAGE_CHOICES``); None means: the question's own language,
+        or the one the question asks for.
 
         ``on_token`` receives live answer text: ``{"reset": True}`` when a free-text answer
         generation starts (so a UI clears what an earlier generation showed), then
@@ -99,6 +106,9 @@ class AgenticRAG:
         ans = Answer(question=question, answer="", refused=False)
         self._on_step = on_step
         self._on_token = on_token
+        self._override = answer_language
+        self._choice = lang.choose_answer_language(question, answer_language)
+        self._pivot_of: dict[str, str] = {}  # answer text -> language it was written in
         try:
             if self.config.agentic and self.config.agent_mode == "adaptive":
                 self._run_adaptive(ans, indexes, history)
@@ -116,8 +126,77 @@ class AgenticRAG:
             ans.answer = "An internal error occurred while answering this question."
         self._presupposition_gate(ans)
         self._name_cited_table(ans)
+        self._translate_answer(ans)
         ans.latency_sec = time.perf_counter() - t0
         return ans
+
+    # ------------------------------------------------------------------ answer language
+
+    def _refusal(self, ans: Answer) -> str:
+        return lang.refusal_message(ans.question, REFUSAL_MESSAGE, getattr(self, "_override", None))
+
+    def _pivot_language(self, passages: list[ScoredChunk]) -> str | None:
+        """Language to write the answer in first, when it differs from the one the user wants.
+
+        A 7B model reading Sanskrit and writing Telugu in one step was the weakest case of
+        the 22-language benchmark (10/21 correct).  Writing the answer in the passages' own
+        language, checking it there, and translating it in a second call splits that into
+        two easier steps.  English answers stay direct (16/20 measured), and so do passages
+        in several scripts (no single language to write in).
+        """
+        choice = getattr(self, "_choice", None)
+        if not self.config.pivot_translation or not passages or choice is None:
+            return None
+        if choice.name in (None, "English"):
+            return None
+        top = passages[:4]
+        if len({lang.script_of(p.chunk.text) for p in top}) != 1:
+            return None
+        source = lang.language_of(" ".join(p.chunk.text for p in top)[:800])
+        if not source or source == choice.name or source.endswith("(Latin letters)"):
+            return None
+        return source
+
+    def _translate_answer(self, ans: Answer) -> None:
+        """Translate an answer written in the passages' language into the user's language."""
+        if ans.refused or ans.error or not ans.answer:
+            return
+        # The calculator and table-name steps may have appended a suffix to the generated text.
+        drafts = getattr(self, "_pivot_of", {})
+        matches = [text for text in drafts if ans.answer.startswith(text)]
+        source = drafts[max(matches, key=len)] if matches else None
+        if not source:
+            return
+        msgs = [
+            {"role": "system", "content": P.TRANSLATE_ANSWER_SYSTEM},
+            {
+                "role": "user",
+                "content": P.TRANSLATE_ANSWER_USER.format(
+                    source=source, target=self._choice.instruction, answer=ans.answer
+                ),
+            },
+        ]
+
+        def call() -> str:
+            ans.llm_calls += 1
+            if getattr(self, "_on_token", None) is None:
+                return self.llm.chat(
+                    msgs, max_tokens=self.config.max_answer_tokens, temperature=0.0
+                )
+            return self._stream_answer(msgs)
+
+        try:
+            text = self._step(ans, "translate_answer", call)
+        except LLMError as exc:  # keep the checked answer in the passages' language
+            logger.warning("answer translation failed: %s", exc)
+            return
+        text = strip_invalid_markers(
+            strip_trailing_sentinel(text or "").strip(), len(ans.retrieved)
+        )
+        if not text or is_refusal(text):
+            return
+        ans.citations = build_citations(text, ans.retrieved) or ans.citations
+        ans.answer = text
 
     def _presupposition_gate(self, ans: Answer) -> None:
         """Presupposition gate (``RAGConfig.presupposition_check``, off by default): refuse a question whose
@@ -139,7 +218,7 @@ class AgenticRAG:
                 return
             unsupported = ans.unsupported_claims
             ans.refused = True
-            ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
+            ans.answer = self._refusal(ans)
             ans.citations = []
             # A refusal has no verdict (as after "no passages retrieved") and no claims.
             ans.grounded, ans.unsupported_claims = None, []
@@ -215,7 +294,7 @@ class AgenticRAG:
         ans.retrieved = first
         if not first:
             ans.refused = True
-            ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
+            ans.answer = self._refusal(ans)
             self._record(ans, "refuse", {"reason": "no passages retrieved"}, 0.0)
             return
         calc_hint, first = self._calculate(ans, standalone, first, indexes)
@@ -369,7 +448,7 @@ class AgenticRAG:
         ans.retrieved = context
         if not context:
             ans.refused = True
-            ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
+            ans.answer = self._refusal(ans)
             self._record(ans, "refuse", {"reason": "no relevant passages"}, 0.0)
             return
 
@@ -416,7 +495,7 @@ class AgenticRAG:
         if not self.config.translate_queries:
             return [question]
         first_of_script: dict[str, DocumentIndex] = {}
-        for ix in indexes:
+        for ix in self._likely_indexes(question, indexes):
             first_of_script.setdefault(getattr(ix, "script", "unknown"), ix)
         targets = [ix for s, ix in first_of_script.items() if lang.needs_translation(question, s)]
         queries = [question]
@@ -439,6 +518,30 @@ class AgenticRAG:
                 queries.append(translation)
         self._n_primary = len(queries)
         return queries
+
+    def _likely_indexes(self, question: str, indexes: list[DocumentIndex]) -> list[DocumentIndex]:
+        """The documents a question most likely concerns, best first.
+
+        With one script in the library every document qualifies.  With several, a cheap
+        fused search with the untranslated question (no reranker) ranks the documents, and
+        only the top ``LIKELY_DOCUMENTS`` are kept, so a Telugu question over 22 books is
+        translated into the scripts of the books it is about, not the first three found.
+        """
+        if len({getattr(ix, "script", "unknown") for ix in indexes}) <= 1:
+            return indexes
+        try:
+            ranked = self.retriever.fuse([question], indexes)
+        except Exception:  # ranking is an optimisation; fall back to every document
+            return indexes
+        by_id = {ix.doc_id: ix for ix in indexes}
+        order: list[DocumentIndex] = []
+        for sc in ranked:
+            ix = by_id.get(sc.chunk.doc_id)
+            if ix is not None and ix not in order:
+                order.append(ix)
+            if len(order) >= LIKELY_DOCUMENTS:
+                break
+        return order or indexes
 
     def _plan(self, question: str, title: str, history: History | None) -> dict[str, Any] | None:
         msgs = [
@@ -653,6 +756,13 @@ class AgenticRAG:
     ) -> None:
         question = question or ans.question
         title = passages[0].chunk.doc_title if passages else ""
+        pivot = self._pivot_language(passages)
+        if pivot:
+            answer_instruction = f"{pivot}, the language of the passages"
+        elif getattr(self, "_choice", None) is not None:
+            answer_instruction = self._choice.instruction
+        else:
+            answer_instruction = lang.answer_language(ans.question)
         msgs = [
             {"role": "system", "content": P.ANSWER_SYSTEM},
             {
@@ -663,7 +773,7 @@ class AgenticRAG:
                     question=question,
                     sentinel=P.ANSWER_NOT_FOUND,
                     feedback=feedback,
-                    answer_language=lang.answer_language(ans.question),
+                    answer_language=answer_instruction,
                 ),
             },
         ]
@@ -683,7 +793,7 @@ class AgenticRAG:
         raw = strip_trailing_sentinel(raw)
         if is_refusal(raw):
             ans.refused = True
-            ans.answer = lang.refusal_message(ans.question, REFUSAL_MESSAGE)
+            ans.answer = self._refusal(ans)
             ans.citations = []
             return
         ans.refused = False
@@ -695,6 +805,8 @@ class AgenticRAG:
                 self._record(ans, "infer_citations", {"pages": [c.page for c in citations]}, 0.0)
         ans.answer = text
         ans.citations = citations
+        if pivot:
+            self._pivot_of[text] = pivot
 
     def _stream_answer(self, msgs: list[dict[str, str]]) -> str:
         """Run one free-text generation through ``chat_stream``, forwarding pieces to the UI.

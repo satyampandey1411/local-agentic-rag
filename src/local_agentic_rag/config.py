@@ -71,6 +71,7 @@ class RAGConfig:
     use_grader: bool = True  # evidence relevance + sufficiency check
     use_verifier: bool = True  # post-hoc grounding verification
     translate_queries: bool = True  # cross-lingual: add a query in the document's language
+    pivot_translation: bool = True  # cross-language: answer in the passages' language, then translate
     use_calculator: bool = True  # deterministic arithmetic/counting tool (agentic modes)
     max_retrieval_rounds: int = 2  # initial retrieval + (n-1) corrective rewrites
     max_answer_attempts: int = 2  # generation + one regeneration on failed verification

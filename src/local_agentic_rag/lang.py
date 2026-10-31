@@ -87,6 +87,19 @@ _HINGLISH_TEXT = """hai hain tha thi thay kya kaun kaunsa kaunse kis kisne kisko
     raha rahe rahi kar karte karta lagbhag kaam"""
 _HINGLISH_WORDS = frozenset(_HINGLISH_TEXT.split())
 
+# Other Indian languages typed in Latin letters ("Tanglish", "Banglish", "Tenglish"): small
+# function-word lists, the same idea as Hinglish (two hits and a fifth of the words).
+_ROMANIZED_TEXT = {
+    "Tamil": """enna epdi eppadi enga yaar yaaru irukku iruku illa illai ethana evlo evvalavu
+        enge eppo eppothu kattinaar kattinar kattiyathu panninaar sollunga sollu aana athu
+        intha antha""",
+    "Bengali": """ki kothay kothae keno ache achhe chhilo chilo hoye hoyechhe korechhilen korechilo
+        kon koto kobe kara bolun bolo theke ebong jonno""",
+    "Telugu": """enti emiti ela ekkada evaru eppudu undi ledu unnaru unnadi kattaru kattinaru
+        cheppandi cheppu inka kani adi idi entha enni""",
+}
+_ROMANIZED_WORDS = {name: frozenset(text.split()) for name, text in _ROMANIZED_TEXT.items()}
+
 
 def _nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text)
@@ -215,7 +228,7 @@ def needs_translation(question: str, doc_script: str) -> bool:
         return False
     if q_script != doc_script:
         return True
-    return doc_script == "latin" and is_hinglish(question)
+    return doc_script == "latin" and romanized_language(question) is not None
 
 
 #: First code point (the zero) of each non-ASCII decimal digit block: Arabic, Urdu/Persian,
@@ -266,9 +279,27 @@ def _devanagari_language(tokens: list[str]) -> str | None:
     return _best(scores)
 
 
-def _latin_language(text: str, tokens: list[str]) -> str | None:
+def romanized_language(text: str) -> str | None:
+    """'Hinglish' (Hindi or Urdu in Latin letters), 'Tamil', 'Bengali', 'Telugu' typed in
+    Latin letters, or None."""
+    if script_of(text) != "latin":
+        return None
     if is_hinglish(text):
         return "Hinglish"
+    words = re.findall(r"[a-z]+", text.lower())
+    for name, vocab in _ROMANIZED_WORDS.items():
+        hits = [w for w in words if w in vocab]
+        if len(set(hits)) >= 2 and len(hits) >= 0.2 * len(words):
+            return name
+    return None
+
+
+def _latin_language(text: str, tokens: list[str]) -> str | None:
+    romanized = romanized_language(text)
+    if romanized == "Hinglish":
+        return "Hinglish"
+    if romanized:
+        return f"{romanized} (Latin letters)"
     if any(ch in "ơưđạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ" for ch in text.lower()):
         return "Vietnamese"
     scores = {
@@ -435,7 +466,24 @@ _SCRIPT_NAMES = {
 }
 
 
-def choose_answer_language(question: str) -> AnswerLanguage:
+#: Languages a user can pick in the web app's "Answer in" menu (besides automatic).
+ANSWER_LANGUAGE_CHOICES = (
+    "English", "Hindi", "Marathi", "Sanskrit", "Nepali", "Bhojpuri", "Awadhi", "Maithili", "Urdu",
+    "Bengali", "Assamese", "Telugu", "Tamil", "Kannada", "Malayalam", "Gujarati", "Punjabi", "Odia",
+    "Hinglish", "Arabic", "Persian", "French", "Spanish", "German", "Portuguese", "Chinese",
+    "Japanese", "Korean", "Russian",
+)  # fmt: skip
+
+
+def choose_answer_language(question: str, override: str | None = None) -> AnswerLanguage:
+    """The answer language: the user's explicit choice (``override``, from the app's menu),
+    else a request inside the question, else the question's own language."""
+    if override and override in ANSWER_LANGUAGE_CHOICES:
+        if override == "Hinglish":
+            return AnswerLanguage(
+                "Hinglish", "Hinglish (Hindi written in Latin script)", requested=True
+            )
+        return AnswerLanguage(override, f"{override} (the user chose it)", requested=True)
     requested = requested_language(question)
     if requested:
         return AnswerLanguage(
@@ -447,6 +495,11 @@ def choose_answer_language(question: str) -> AnswerLanguage:
         return AnswerLanguage(
             "Hinglish",
             "Hinglish (Hindi written in Latin script), the same way the question is written",
+        )
+    if name and name.endswith("(Latin letters)"):
+        return AnswerLanguage(
+            name,
+            f"{name.replace('(Latin letters)', '').strip()} written in Latin letters, the same way the question is written",
         )
     if name:
         if script == "devanagari":
@@ -465,10 +518,10 @@ def choose_answer_language(question: str) -> AnswerLanguage:
     return AnswerLanguage(None, f"the same language as the question ({label} script)")
 
 
-def answer_language(question: str) -> str:
+def answer_language(question: str, override: str | None = None) -> str:
     """Explicit language instruction for the generator (vague wording made a 7B model
     answer an English question in Hindi on Colab)."""
-    return choose_answer_language(question).instruction
+    return choose_answer_language(question, override).instruction
 
 
 _NOT_FOUND_EN = "(The answer was not found in the document.)"
@@ -506,8 +559,8 @@ REFUSALS = {
 }
 
 
-def refusal_message(question: str, default: str) -> str:
+def refusal_message(question: str, default: str, override: str | None = None) -> str:
     """'Not found' in the language the answer would have been written in."""
-    name = choose_answer_language(question).name
+    name = choose_answer_language(question, override).name
     text = REFUSALS.get(name or "")
     return f"{text} {_NOT_FOUND_EN}" if text else default
