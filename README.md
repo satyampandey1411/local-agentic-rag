@@ -1,5 +1,7 @@
 # Local Agentic RAG
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/satyampandey1411/local-agentic-rag/blob/main/notebooks/Quick_Start.ipynb)
+
 **Ask questions about any PDF, even a 10,000-page one, and get answers with page citations you can click.**
 Every model runs locally on a single T4 GPU (free Google Colab or Kaggle). No outside AI service, no API key.
 
@@ -7,7 +9,7 @@ Every model runs locally on a single T4 GPU (free Google Colab or Kaggle). No ou
 |---|---|
 | **84.6%** of answerable English questions correct (44/52) | **9/9** questions with no answer in the document refused |
 | **15/18 · 19/25 · 9/14** on three held-out documents never used for tuning | **1/52** with the same model and no documents: answers come from retrieval |
-| **22 languages tested**: 81/111 correct, 112/122 answered in the right script; **18/20** on unseen Sanskrit, Bhojpuri, Urdu, Telugu, Tamil and French documents | **10,000 pages** processed in 37 min on a T4, with crash recovery |
+| **22 languages tested**: 81/111 correct, 118/122 answered in the right script; **18/20** on unseen Sanskrit, Bhojpuri, Urdu, Telugu, Tamil and French documents | **10,000 pages** processed in 37 min on a T4, with crash recovery |
 | **0.5 s** median to the first words of an answer | **8.9 of 15 GB** GPU memory with every model loaded |
 
 All numbers are measured on Tesla T4 GPUs between 25 and 31 Oct 2026; how and where is in
@@ -30,8 +32,10 @@ All numbers are measured on Tesla T4 GPUs between 25 and 31 Oct 2026; how and wh
   Gujarati, Punjabi, Odia, English, French, Chinese, Japanese, Russian, ...) and ask in any language: a
   Telugu question about a Sanskrit book works. Search is cross-lingual, the question is also translated
   into each document's script, and the answer comes back in the question's language, or in the language
-  you ask for ("Answer in Urdu", "उर्दू में बताइए"). Scanned pages are read with OCR after detecting each
-  page's script. With several books selected, each citation names its book.
+  you ask for ("Answer in Urdu", "उर्दू में बताइए", or the app's "Answer in" menu). When the book and the
+  answer are in different languages, the answer is written and checked in the book's language, then
+  translated. Scanned pages are read with OCR after detecting each page's script. With several books
+  selected, each citation names its book.
 - **Handles long PDFs.** Ingestion streams page batches through crash-isolated workers and saves a checkpoint
   after every batch. A 10,000-page PDF can be asked about after its first batch, and an interrupted job
   resumes where it stopped.
@@ -96,7 +100,7 @@ questions; the same Kaggle T4 session ran the code before and after the multi-la
 | Needs one fact from each of two books in different languages: correct · cited both books | 2/6 · 4/6 | 1/6 · 2/6 |
 | Scanned (image-only) copy | 2/14 | **6/14** |
 | Not in the document: refused | 9/11 | 9/11 |
-| **All answerable** · answers written in the right script (all 122) | 75/111 · 96/122 | **81/111 · 112/122** |
+| **All answerable** · answers written in the right script (all 122) | 75/111 · 96/122 | **81/111 · 118/122** |
 
 Six further documents (Sanskrit, Bhojpuri, Urdu, Telugu, Tamil, French), written and sealed before any
 result was seen and run once: **18/20** correct, 19/20 in the right script. Re-running the earlier sets
@@ -162,7 +166,11 @@ python -m local_agentic_rag.server --library ~/rag-library --port 8000   # open 
 
 `python -m local_agentic_rag.server --demo` runs the interface with a fake backend, no GPU needed.
 
-**Google Colab:** open `notebooks/Local_Agentic_RAG.ipynb`, choose **Runtime → Change runtime type → T4 GPU**
+**Google Colab, quickest:** press the **Open in Colab** button at the top (it opens
+`notebooks/Quick_Start.ipynb`), choose a **T4 GPU** if Colab did not, and press **Run**. The app opens under
+the cell after the one-time downloads.
+
+**Google Colab, full notebook:** open `notebooks/Local_Agentic_RAG.ipynb`, choose **Runtime → Change runtime type → T4 GPU**
 and run the cells in order. It installs the package, starts Ollama with Qwen2.5-7B, lets you upload a PDF
 and ask questions, starts the web app through Colab's port proxy (section 7b) and can reproduce the
 benchmarks.
