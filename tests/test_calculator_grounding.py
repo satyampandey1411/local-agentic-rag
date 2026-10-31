@@ -1,6 +1,6 @@
 """Calculator safety: grounded operands, no override of stated values, operation choice, ID counts.
 
-Each test reproduces a failure from the 2026-10-25 Colab run (the passages are trimmed copies of
+Each test reproduces a failure from an early Colab run (the passages are trimmed copies of
 the real chunks: ``ingest/tables.py`` rows and Markdown grids).
 """
 

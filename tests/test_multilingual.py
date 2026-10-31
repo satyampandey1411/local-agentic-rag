@@ -39,7 +39,9 @@ def test_script_and_hinglish_detection():
         "According to the bias-interplay analysis, which biases were the most problematic for the retrievers?"
     )
     assert not lang.is_hinglish("Tell me what the paper says about the dataset and the queries")
-    assert lang.is_hinglish("Authors ne kaunsa dataset repurpose kiya aur har setting mein kitni queries thi?")
+    assert lang.is_hinglish(
+        "Authors ne kaunsa dataset repurpose kiya aur har setting mein kitni queries thi?"
+    )
     assert lang.needs_translation("Who built it?", "devanagari")
     assert lang.needs_translation("ताजमहल किसने बनवाया?", "latin")
     assert lang.needs_translation("Re-DocRED kya hai aur kitne queries hai?", "latin")

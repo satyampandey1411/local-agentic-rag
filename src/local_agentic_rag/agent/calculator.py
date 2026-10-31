@@ -13,7 +13,7 @@ arithmetic is moved out of the model:
        only — no names, calls or attributes, so model output cannot execute code);
     4. the result is handed to the generator as a verified hint.
 
-Measured failures of that design (2026-10-25 run) and the guards added for them:
+Measured failures of that design (an early Colab run) and the guards added for them:
 
 * operands from the wrong row/column/passage (2.61/-3.52 from the "Nonfarm" row
   for a GDP swing; 93.6 from the "Evidence Doc" column for "no document"):

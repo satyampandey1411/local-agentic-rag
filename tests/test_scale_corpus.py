@@ -186,8 +186,9 @@ def test_missing_font_dir_skips_hindi_pages(tmp_path):
     assert meta["hindi_pages"] == [] and meta["pages"] == 24
 
 
-@pytest.mark.skipif(not list(DEVANAGARI_DIR.glob("*Devanagari*Regular*.ttf")),
-                    reason="no Devanagari font installed")
+@pytest.mark.skipif(
+    not list(DEVANAGARI_DIR.glob("*Devanagari*Regular*.ttf")), reason="no Devanagari font installed"
+)
 def test_hindi_pages_with_font(tmp_path):
     meta = make_corpus.generate(PAGES, tmp_path, seed=7, font_dir=DEVANAGARI_DIR)
     assert meta["hindi_pages"]

@@ -1,7 +1,7 @@
 """Numerical-question fixes behind flags (all off by default): cell alignment, measure check
 with escalation, and date candidates for time spans.
 
-Passages are trimmed copies of the real chunks from the 27 Oct Kaggle run (English dev set).
+Passages are trimmed copies of the real chunks from a Kaggle run (English dev set).
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def _gpt4o_extraction(no_doc_value):
 
 
 def test_value_from_a_lookalike_row_is_realigned_to_the_labelled_cell():
-    # arXiv q10 (Kaggle 27 Oct): 52.0 is gpt-4o-mini's "No Doc"; the label says gpt-4o.
+    # arXiv q10 (Kaggle run): 52.0 is gpt-4o-mini's "No Doc"; the label says gpt-4o.
     assert C.evaluate(_gpt4o_extraction(52.0), [ARXIV_TABLE5])["result"] == "21.2"  # flag off
     out = C.evaluate(_gpt4o_extraction(52.0), [ARXIV_TABLE5], align=True)
     assert out["result"] == "34"

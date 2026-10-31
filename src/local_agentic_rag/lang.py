@@ -417,31 +417,60 @@ _END_REQUEST_RE = re.compile(
 )
 
 
+# Words that can only mean "the answer" ("write", "tell" ... also appear in questions about writing).
+_STRONG_ANSWER_WORDS = _words(
+    "answer reply respond translate उत्तर जवाब jawab javab uttar جواب উত্তর సమాధానం జవాబు பதில் "
+    "ಉತ್ತರ ഉത്തരം જવાબ ઉત્તર ਜਵਾਬ ਉੱਤਰ ଉତ୍ତର réponds répondez réponse responde respuesta antworte antwort"
+)
+_SENTENCE_RE = re.compile(r"[^.?!।॥؟\n]+[.?!।॥؟]*")
+
+
 def requested_language(question: str) -> str | None:
     """Language the question explicitly asks the answer to be in, e.g. "... Answer in Urdu."."""
     text = _nfc(question or "")
     m = _END_REQUEST_RE.search(text.strip())
     if m and m.group(1).lower() in _ALIASES:
         return _ALIASES[m.group(1).lower()]
-    tokens = _tokens(text)
-    if not any(t in _ANSWER_WORDS for t in tokens):
-        return None
+    for sentence in _SENTENCE_RE.findall(text):
+        # "Which poems did he write in Urdu?" asks about Urdu; "Write it in Urdu." asks for Urdu.
+        name = _request_in(_tokens(sentence), statement=not sentence.rstrip().endswith(("?", "؟")))
+        if name:
+            return name
+    return None
+
+
+def _request_in(tokens: list[str], statement: bool) -> str | None:
+    """A language named next to an answer word ("answer in Urdu", "उर्दू में बताइए", "హిందీలో చెప్పండి")."""
+
+    def answer_word_near(i: int, before: int, after: int) -> bool:
+        window = tokens[max(0, i - before) : i] + tokens[i + 1 : i + 1 + after]
+        return any(t in _STRONG_ANSWER_WORDS or (statement and t in _ANSWER_WORDS) for t in window)
+
     for i, tok in enumerate(tokens):
         nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
         if tok in _ALIASES:
             name = _ALIASES[tok]
             prev = tokens[i - 1] if i else ""
-            if tok.isascii():
-                # "in Urdu", "into Hindi", "Hindi mein" — and not "Tamil Nadu"
-                if (prev in ("in", "into", "using") or nxt in _IN_AFTER) and nxt != "nadu":
-                    return name
-            elif nxt in _IN_AFTER:
+            # "answer in Urdu", "write it into Hindi" — and not "Tamil Nadu"
+            if (
+                tok.isascii()
+                and prev in ("in", "into", "using")
+                and nxt != "nadu"
+                and answer_word_near(i - 1, 3, 0)
+            ):
+                return name
+            # "उर्दू में बताइए", "English mein batao"
+            if nxt in _IN_AFTER and answer_word_near(i + 1, 0, 2):
                 return name
             continue
         if tok.isascii():
             continue
         for stem, name in _STEMS.items():
-            if tok.startswith(stem) and tok[len(stem) :] in _LOCATIVE_SUFFIXES:
+            if (
+                tok.startswith(stem)
+                and tok[len(stem) :] in _LOCATIVE_SUFFIXES
+                and answer_word_near(i, 0, 2)
+            ):
                 return name
     return None
 

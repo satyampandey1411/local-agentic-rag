@@ -87,6 +87,12 @@ def test_unclear_devanagari_question_is_not_forced_into_hindi():
         ("उर्दू भाषा किस देश की राष्ट्रभाषा है? बताइए", None),
         ("Which temple in Tamil Nadu is tallest? Answer briefly.", None),
         ("Who built the Taj Mahal?", None),
+        ("Which poems did he write in Urdu?", None),
+        ("Tell me how many books were written in Hindi.", None),
+        ("Give the number of films released in Tamil in 2010.", None),
+        ("कौन सी किताबें उर्दू में लिखी गईं? बताइए।", None),
+        ("Explain the result in Hindi.", "Hindi"),
+        ("Can you answer in Bengali?", "Bengali"),
     ],
 )
 def test_explicit_answer_language_request(question, requested):
@@ -175,6 +181,9 @@ def test_long_spaceless_paragraph_is_cut_to_size():
         ("பக்கம் 2 இல் என்ன உள்ளது?", [2]),
         ("पृष्ठ 3 से 5", [3, 4, 5]),
         ("In 1,234 cases", []),
+        ("Was steht auf Seite 12?", [12]),
+        ("Wie viele Besucher hatte die Webseite 2023?", []),
+        ("Startseite 12", []),
     ],
 )
 def test_page_references_in_other_languages(question, pages):
@@ -264,6 +273,11 @@ def test_ocr_timeout_retries_with_one_pack_at_lower_dpi(monkeypatch):
         ("tel+eng", pdf.OCR_TIMEOUT_S),
         ("tel", pdf.OCR_RETRY_TIMEOUT_S),
     ]
+    calls.clear()
+    pdf._ocr_cli_paragraphs(
+        _Page(), 2, pdf.DEFAULT_OCR_LANGUAGE
+    )  # a Hindi scan keeps the Hindi pack
+    assert [c[0] for c in calls if c[0] != "dpi"] == [pdf.DEFAULT_OCR_LANGUAGE, "eng+hin"]
 
 
 class _LegacyFontPage:
@@ -357,6 +371,27 @@ def test_explicit_request_answers_in_the_passages_language_then_translates():
     assert "translate_answer" in steps(ans)
 
 
+def test_failed_translation_keeps_the_checked_answer():
+    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
+    agent, llm = make_agent(
+        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
+        agent_mode="adaptive",
+    )
+    _with_translations(llm)
+    routed, attempts = llm.responder, []
+
+    def responder(messages, schema):
+        if messages[0]["content"] == P.TRANSLATE_ANSWER_SYSTEM:
+            attempts.append(1)
+            raise RuntimeError("connection reset")  # not an LLMError
+        return routed(messages, schema)
+
+    llm.responder = responder
+    ans = agent.run("Who built the Taj Mahal? Answer in Urdu.", [index])
+    assert attempts, "the answer translation was not attempted"
+    assert ans.answer.startswith("शाहजहाँ") and ans.cited_pages == [2] and not ans.error
+
+
 def test_english_answers_stay_direct():
     index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
     agent, llm = make_agent(
@@ -377,17 +412,6 @@ def test_same_language_needs_no_pivot():
     )
     ans = agent.run("ताजमहल किसने बनवाया?", [index])
     assert "translate_answer" not in steps(ans)
-
-
-def test_failed_translation_keeps_the_checked_answer():
-    index = make_index(HINDI_CORPUS, FakeEmbedder(), doc_id="hi", title="ताजमहल")
-    agent, llm = make_agent(
-        scripted(generate=cite("शाहजहाँ", "शाहजहाँ ने बनवाया [{n}]।"), verify=VERIFY_OK),
-        agent_mode="adaptive",
-    )
-    _with_translations(llm, answer="")
-    ans = agent.run("తాజ్ మహల్‌ను ఎవరు నిర్మించారు?", [index])
-    assert ans.answer.startswith("शाहजहाँ") and ans.cited_pages == [2]
 
 
 def test_menu_choice_overrides_the_question_language():

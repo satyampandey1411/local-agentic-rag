@@ -839,7 +839,7 @@
     const root = h('div', { className: 'answer-text' });
     const blocks = String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/);
     for (const block of blocks) {
-      const lines = block.split('\n').filter((l) => l.trim()).map(citesToSentenceEnd);
+      const lines = block.split('\n').filter((l) => l.trim()).map(citesToLineEnd);
       if (!lines.length) continue;
       const bullet = /^\s*[-*•]\s+/;
       const numbered = /^\s*\d+[.)]\s+/;
@@ -901,12 +901,15 @@
   }
 
   // A citation belongs after the claim it supports. Models (and translations) sometimes open a
-  // sentence with it ("[1] के अनुसार ..."); move such a leading group to the end of its sentence.
-  const SENTENCE_END = '.!?।॥。！？';
-  const LEADING_CITES = new RegExp(`(^|[${SENTENCE_END}]\\s+)((?:\\[\\d+(?:\\s*[,;]\\s*\\d+)*\\][\\s,:;]*)+)([^${SENTENCE_END}]*)([${SENTENCE_END}]?)`, 'gu');
-  function citesToSentenceEnd(line) {
-    return line.replace(LEADING_CITES, (all, lead, cites, body, end) =>
-      (body.trim() ? `${lead}${body.trim()} ${cites.replace(/[\s,:;]+$/, '').trim()}${end}` : all));
+  // sentence with it ("[1] के अनुसार ..."); such groups move to the end of the line, before its full
+  // stop. Only sentence starts are looked for, so "56.7" or "Dr. Rao" are never split.
+  const CITE_GROUP = String.raw`(?:\[\d+(?:\s*[,;]\s*\d+)*\][\s,:;]*)+`;
+  const LEADING_CITES = new RegExp(String.raw`(^|[.!?।॥。！？]\s+)(${CITE_GROUP})`, 'gu');
+  function citesToLineEnd(line) {
+    const moved = [];
+    const rest = line.replace(LEADING_CITES, (all, lead, cites) => { moved.push(cites.replace(/[\s,:;]+$/, '').trim()); return lead; });
+    if (!moved.length || !rest.trim()) return line;
+    return rest.replace(/\s*([.!?।॥。！？]*)\s*$/u, (end, stop) => ` ${moved.join(' ')}${stop}`);
   }
 
   function buildAnswer(m) {
@@ -946,7 +949,12 @@
     const foot = h('div', { className: 'answer-foot' });
     if (!a.refused) {
       if (a.grounded === false) foot.append(h('span', { className: 'badge badge-warn', title: 'Some statements could not be checked against the document. Open the sources to verify.' }, icon('alert', 'icon icon-sm'), 'Unverified'));
-      else if (a.grounded === true) foot.append(h('span', { className: 'badge badge-ok', title: 'A second pass checked the answer against the passages it was based on.' }, icon('shield', 'icon icon-sm'), 'Verified'));
+      else if (a.grounded === true) {
+        const translated = Array.isArray(a.trace) && a.trace.some((t) => t.step === 'translate_answer');
+        foot.append(h('span', { className: 'badge badge-ok', title: translated
+          ? "A second pass checked the answer against its passages in the book's language; it was then translated."
+          : 'A second pass checked the answer against the passages it was based on.' }, icon('shield', 'icon icon-sm'), 'Verified'));
+      }
       else foot.append(h('span', { className: 'badge', title: 'The automatic check did not run or gave no result. Open the sources to verify.' }, 'Not checked'));
     }
     const inferred = Array.isArray(a.trace) && a.trace.some((t) => t.step === 'infer_citations');

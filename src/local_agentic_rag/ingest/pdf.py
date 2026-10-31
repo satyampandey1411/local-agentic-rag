@@ -703,6 +703,7 @@ OCR_SCRIPT_LANGUAGES = {
     "Han": ["chi_sim", "chi_tra"],
     "Japanese": ["jpn"],
     "Hangul": ["kor"],
+    "Korean": ["kor"],
     "Cyrillic": ["rus", "ukr"],
     "Greek": ["ell"],
     "Hebrew": ["heb"],
@@ -818,10 +819,11 @@ def _ocr_cli_paragraphs(page, page_no: int, lang: str) -> list[str]:
 
 
 def _ocr_fast_retry(page, page_no: int, language: str, tmp: str) -> list[str]:
-    """Second OCR attempt after a timeout: the main pack only, at ``OCR_RETRY_DPI``."""
+    """Second OCR attempt after a timeout: the main pack only, at ``OCR_RETRY_DPI``. The default packs
+    (Latin and Devanagari pages) keep English and Hindi, so a Hindi scan is not re-read as English."""
     import subprocess
 
-    primary = language.split("+")[0]
+    primary = "eng+hin" if language == DEFAULT_OCR_LANGUAGE else language.split("+")[0]
     image = os.path.join(tmp, f"page{page_no}-fast.png")
     page.get_pixmap(dpi=OCR_RETRY_DPI).save(image)
     try:

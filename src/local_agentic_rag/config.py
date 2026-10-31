@@ -71,7 +71,9 @@ class RAGConfig:
     use_grader: bool = True  # evidence relevance + sufficiency check
     use_verifier: bool = True  # post-hoc grounding verification
     translate_queries: bool = True  # cross-lingual: add a query in the document's language
-    pivot_translation: bool = True  # cross-language: answer in the passages' language, then translate
+    pivot_translation: bool = (
+        True  # cross-language: answer in the passages' language, then translate
+    )
     use_calculator: bool = True  # deterministic arithmetic/counting tool (agentic modes)
     max_retrieval_rounds: int = 2  # initial retrieval + (n-1) corrective rewrites
     max_answer_attempts: int = 2  # generation + one regeneration on failed verification
@@ -82,7 +84,7 @@ class RAGConfig:
     # passages, replace the answer with the standard refusal (agent/presupposition.py).
     presupposition_check: bool = False
     # Numerical questions (agent/calculator.py). Measured on the English dev set (Kaggle runs
-    # 5-6, 27 Oct): alignment + date candidates + measure-aware retrieval took accuracy from
+    # 5-6): alignment + date candidates + measure-aware retrieval took accuracy from
     # 0.769 to 0.846 (numerical 2/6 -> 5/6) with no p95 latency cost and multilingual
     # unchanged, so those three are on by default. The measure check is off: on its own it
     # added +6.7 s p95 and its one gain also came from measure-aware retrieval.
@@ -173,8 +175,8 @@ PRESETS: dict[str, dict[str, Any]] = {
     "agentic_full": {"agent_mode": "full"},
     # Adaptive agent + the presupposition gate (flag off in every other preset).
     "agentic_presup": {"presupposition_check": True},
-    # The default agent before the numerical fixes (results up to 27 Oct were measured with
-    # this), and each fix added to it on its own (the run 5 ablation).
+    # The default agent before the numerical fixes (the earlier results were
+    # measured with this), and each fix added to it on its own (the run 5 ablation).
     "agentic_pre_numeric": {
         "measure_aware_retrieval": False,
         "calc_cell_alignment": False,

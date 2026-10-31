@@ -1,4 +1,4 @@
-"""Regression tests for bugs found by the independent code review (2026-10-25)."""
+"""Regression tests for bugs found by the independent code review."""
 
 from __future__ import annotations
 

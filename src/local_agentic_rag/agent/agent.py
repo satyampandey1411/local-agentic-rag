@@ -187,7 +187,7 @@ class AgenticRAG:
 
         try:
             text = self._step(ans, "translate_answer", call)
-        except LLMError as exc:  # keep the checked answer in the passages' language
+        except Exception as exc:  # any failure keeps the checked answer in the passages' language
             logger.warning("answer translation failed: %s", exc)
             return
         text = strip_invalid_markers(

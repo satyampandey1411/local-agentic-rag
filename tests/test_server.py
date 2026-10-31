@@ -935,8 +935,12 @@ def test_ask_passes_the_answer_language_choice(tmp_path) -> None:
     lib = _LanguageLibrary(store)
     lib.add_ready("d1", "Annual report")
     with make_client(lib, tmp_path) as c:
-        assert c.post("/api/ask", json={"question": "q", "answer_language": "Urdu"}).status_code == 200
-        assert c.post("/api/ask", json={"question": "q", "answer_language": "auto"}).status_code == 200
+        assert (
+            c.post("/api/ask", json={"question": "q", "answer_language": "Urdu"}).status_code == 200
+        )
+        assert (
+            c.post("/api/ask", json={"question": "q", "answer_language": "auto"}).status_code == 200
+        )
         assert c.post("/api/ask", json={"question": "q"}).status_code == 200
         r = c.post("/api/ask", json={"question": "q", "answer_language": "Klingon"})
         assert r.status_code == 422 and "Klingon" in r.json()["detail"]
