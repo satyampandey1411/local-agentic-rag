@@ -3,7 +3,6 @@ SEALED held-out set - run exactly once, at the very end. Do not read questions.j
 file:    benchmark/languages/heldout/questions.jsonl
 lines:   20 questions (6 docs x 3 questions + 2 two-books questions)
 sha256:  88ffcd8e516df3560279713e09362379a3b1d0bc9a48223af90df2bc7c9dda9e
-sealed:  2026-10-31 14:03:34 IST
 
 Verify before the run:  sha256sum benchmark/languages/heldout/questions.jsonl
 Build and check:        .venv/bin/python benchmark/languages/make_pdfs.py --heldout

@@ -74,6 +74,6 @@ source pages through `derived_from` and `derived_pages`.
 
 ## Changelog
 
-* 2026-10-26: `ml-hi-tajmahal-q04` gained the aliases "a thousand", "1,000", "हज़ार"/"हजार". A
+* Grading fix: `ml-hi-tajmahal-q04` gained the aliases "a thousand", "1,000", "हज़ार"/"हजार". A
   correct answer ("over a thousand elephants") was being scored wrong. This was found by reading the
   failures of the final run, so results before and after this date differ by this one grader fix.

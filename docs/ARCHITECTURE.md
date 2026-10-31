@@ -48,7 +48,7 @@ Colab T4 GPU (15 GB VRAM).
  answer + citations (marker → chunk → page) + grounded flag + trace
 ```
 
-Cost, measured in the 27 Oct regression run (run 3, English set, 61 questions): the median question
+Cost, measured in the regression run (run 3, English set, 61 questions): the median question
 used 2 LLM calls and the most was 9 (a numerical question). `agent_mode="full"` keeps the
 original always-on loop (plan → retrieve⇄grade → generate⇄verify) for comparison.
 
@@ -198,7 +198,7 @@ of a PDF's text layer garbled or out of order (seen while building the test PDFs
 | bge-reranker-v2-m3 (fp16) | ~1.1 GB |
 | **Total** | **~7 GB**, leaving room for longer contexts or a 14B model at Q4 |
 
-Measured peak on Colab (25 Oct): 6.9 GB VRAM; with all three models loaded in the final notebook run, 9,069 of 15,360 MiB in use. Long documents do not change this: the embedder and reranker used 2.4 GB of CUDA memory at every size from 100 to 10,000 pages, and a 10,000-page index is 188 MB on disk (SCALE.md). Host RAM, not VRAM, is the binding limit. Ollama's
+Measured peak on Colab: 6.9 GB VRAM; with all three models loaded in the final notebook run, 9,069 of 15,360 MiB in use. Long documents do not change this: the embedder and reranker used 2.4 GB of CUDA memory at every size from 100 to 10,000 pages, and a 10,000-page index is 188 MB on disk (SCALE.md). Host RAM, not VRAM, is the binding limit. Ollama's
 model runner was measured leaking about 100 MB of anonymous memory per request,
 and under memory pressure it also disables mmap and copies the 4.7 GB model into RAM.
 The kernel OOM-killer then took down the notebook. Mitigations, all in the code:

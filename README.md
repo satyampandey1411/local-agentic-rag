@@ -13,7 +13,7 @@ outside AI service, no API key.
 | **22 languages tested**: 85/111 correct, 117/122 answered in the right script; **33/44** and **18/20** on two sealed sets of unseen documents in 16 languages | **10,000 pages** processed in 37 min on a T4, with crash recovery |
 | **0.5 s** median to the first words of an answer | **8.9 of 15 GB** GPU memory with every model loaded |
 
-All numbers are measured on Tesla T4 GPUs between 25 and 31 Oct 2026; how and where is in
+All numbers are measured on Tesla T4 GPUs; how and where is in
 [docs/RESULTS.md](docs/RESULTS.md) and [docs/SCALE.md](docs/SCALE.md).
 
 ![How Local Agentic RAG answers a question about a long PDF](docs/img/workflow.png)
@@ -75,7 +75,7 @@ is the weakest case so far: 1 of 6 two-book questions fully right, 3 of 6 citing
 
 **How well does it work?**
 
-| Kind of question (122 questions, Kaggle T4, 31 Oct) | Correct |
+| Kind of question (122 questions, Kaggle T4) | Correct |
 |---|---:|
 | Question in the document's language | 21/21 |
 | English question about a non-English document | 16/20 |
@@ -91,7 +91,7 @@ Only 4 of the 111 answerable questions were wrongly refused. On documents writte
 any result was seen, and run once: **33/44** on ten (Hindi, Marathi, Nepali, Awadhi, Maithili, Bengali,
 Kannada, Malayalam, Odia, Japanese, with four scanned copies) and **18/20** on six (Sanskrit, Bhojpuri,
 Urdu, Telugu, Tamil, French). Per-language tables and caveats:
-[docs/RESULTS.md](docs/RESULTS.md#8b-many-languages-31-oct).
+[docs/RESULTS.md](docs/RESULTS.md#8b-many-languages).
 
 **What does not work well yet?** Questions in a different non-English language from the book (12/21)
 and two-book questions (1/6): the right passages are found, but the 7B answer model misreads them in
@@ -144,7 +144,7 @@ and **Hindi/Marathi/Hinglish** (20 questions):
 **Is it answering from memory?** No. With the same 61 questions and no document passages, Qwen2.5-7B got
 1/52 right.
 
-**Long documents** (synthetic table-heavy PDFs with 40 independently written questions per size, Kaggle T4, 27 Oct):
+**Long documents** (synthetic table-heavy PDFs with 40 independently written questions per size, Kaggle T4):
 
 | | 100 pages | 1,000 pages | 10,000 pages |
 |---|---:|---:|---:|
@@ -160,7 +160,7 @@ web app served 1 to 8 concurrent users with no failed request, at about 10.5 ans
 <details>
 <summary><b>Which answer model?</b> Five models compared on the same retriever and prompts</summary>
 
-Only the language model swapped (Kaggle T4, 29 Oct):
+Only the language model swapped (Kaggle T4):
 
 | Answer model (4-bit) | English correct | Unanswerable refused | Hindi/Marathi correct | Median answer time | Peak GPU memory |
 |---|---:|---:|---:|---:|---:|
@@ -172,7 +172,7 @@ Only the language model swapped (Kaggle T4, 29 Oct):
 
 Three models tie on accuracy. Qwen2.5-7B refuses every unanswerable question, is the fastest of the three
 and uses the least memory. The prompts were developed with Qwen, which may favour it. On the 22-language
-set (31 Oct): Qwen2.5-7B 85/111, Qwen3-8B 93/111, Gemma-3-12B 101/111 (unanswerable refused 9/11, 8/11,
+set: Qwen2.5-7B 85/111, Qwen3-8B 93/111, Gemma-3-12B 101/111 (unanswerable refused 9/11, 8/11,
 6/11).
 
 </details>
@@ -317,8 +317,8 @@ benchmarks and status in five pages (source `report/main.tex`, build with `repor
 
 ## License and data
 
-Private repository, not licensed for redistribution. (PyMuPDF, the PDF parser, is AGPL-3.0; that would
-matter only if the project were distributed.)
+No licence is granted for reuse or redistribution. PyMuPDF, the PDF parser this project uses, is licensed
+AGPL-3.0.
 
 The English benchmark PDFs are downloaded from their public sources and are not stored in the repository.
 The multilingual test PDFs are generated from Wikipedia text (CC BY-SA 4.0, attribution in

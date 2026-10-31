@@ -1,4 +1,4 @@
-# Held-out set 2 (written 26 Oct 2026; each document used once)
+# Held-out set 2 (each document used once)
 
 70 questions on three documents that were never used while building or tuning the system. The
 questions were written independently of the system: their authors read only the official sources

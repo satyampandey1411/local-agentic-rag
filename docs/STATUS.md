@@ -1,6 +1,6 @@
 # Status and known limitations
 
-Snapshot of 30 Oct 2026: what is implemented, how each part was verified, and what is not done or
+What is implemented, how each part was verified, and what is not done or
 not tested. Benchmark numbers are in [RESULTS.md](RESULTS.md) and [SCALE.md](SCALE.md); this page
 names the run behind each claim.
 
@@ -13,7 +13,7 @@ names the run behind each claim.
 | PDF ingestion with PyMuPDF: column-aware reading order, running headers and footers removed, headings, error handling for unreadable, encrypted, empty and non-PDF files | unit tests with generated PDFs (two-column order, header stripping, blank/non-PDF/missing files); the 3 benchmark PDFs ingest in 4–37 s |
 | Ruled tables → Markdown with captions; whitespace statistical tables → labelled rows (`label \| 2025 Q2 = 3.8`) | unit tests incl. spanning headers; BEA tables answered correctly by the 7B model on a T4 |
 | Token-aware, heading-aware, page-bound chunking | unit tests (size limits, overlap, sections, no page crossing) |
-| OCR of scanned pages with the Tesseract CLI at 300 dpi; the page's script is detected first and the matching pack used (Urdu/Arabic, Bengali/Assamese, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi, Odia, Chinese, Japanese, Russian; Latin and Devanagari keep eng+hin+mar); garbled text layers and legacy Hindi fonts sent to OCR | scanned Hindi document: word recall 0.99–1.00, both scanned-page questions correct (Colab T4, 25 Oct); 14 scanned copies in 14 scripts: 9/14 correct, 14/14 in the right script, 7–15 s per scanned page (run 11); 4/4 on the held-out scans |
+| OCR of scanned pages with the Tesseract CLI at 300 dpi; the page's script is detected first and the matching pack used (Urdu/Arabic, Bengali/Assamese, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi, Odia, Chinese, Japanese, Russian; Latin and Devanagari keep eng+hin+mar); garbled text layers and legacy Hindi fonts sent to OCR | scanned Hindi document: word recall 0.99–1.00, both scanned-page questions correct (Colab T4); 14 scanned copies in 14 scripts: 9/14 correct, 14/14 in the right script, 7–15 s per scanned page (run 11); 4/4 on the held-out scans |
 | Streaming, resumable ingestion (two passes, checkpoint after every batch, bounded memory) | 100- to 10,000-page documents on a T4; output identical to the in-memory parser on every benchmark PDF; resume after interruption at every size (scale runs v1 and 4) |
 | Crash-isolated parse workers (per-page time limits, restart, empty-page fallback) | a killed worker cost exactly one page at every size; hang and crash unit tests |
 | Table detection on the GPU (opt-in, `LOCAL_RAG_ONNX_GPU=1`) | 1,000 table-heavy pages parsed 1.89× faster (224.7 s → 119.0 s) with byte-identical output (run 2); the GPU and CPU paths parsed all 8 test PDFs identically (run 3) |
@@ -23,7 +23,7 @@ names the run behind each claim.
 
 | Area | Verified by |
 |---|---|
-| Hybrid retrieval (BGE-M3 + Unicode BM25, reciprocal rank fusion) and cross-encoder rerank (bge-reranker-v2-m3) | retrieval ablation: page recall@5 73.1% (starting code) → 94.2%; reproduced on CPU and T4 |
+| Hybrid retrieval (BGE-M3 + Unicode BM25, reciprocal rank fusion) and cross-encoder rerank (bge-reranker-v2-m3) | retrieval ablation: page recall@5 94.2% (a basic MiniLM search: 73.1%); reproduced on CPU and T4 |
 | Page and section references in questions ("page 4,512", "section 7203") | page questions rank 3–4 instead of 87–895 before reranking. Section numbers on chunks: US Code Title 26 recall@5 0.75 → 0.92, answerable 6/12 → 7/12 (run 2, not held out); held-out US Code Title 21: 8/9 questions naming a section correct (run 3) |
 | Adaptive agent (verify, escalate only on refusal or an unsupported claim), full-loop mode for comparison, chat-history condensing, bounded loops, fallbacks on invalid JSON | 33 agent unit tests with a scripted LLM; agent ablation on a T4 ([RESULTS.md section 3](RESULTS.md#3-the-agent-what-the-ablation-taught-us)) |
 | Calculator for quantitative questions (fixed operations, operands checked against the cited row and column, safe evaluation) and three numerical fixes (cell alignment, measure-aware retrieval, date candidates) | unit tests incl. 30 grounding tests; numerical questions 2/6 → 5/6 on the English development set (runs 5 and 6) |
@@ -38,7 +38,7 @@ names the run behind each claim.
 | Area | Verified by |
 |---|---|
 | Document library and web app: upload, background queue, live progress, delete and retry, highlighted source pages | 0 failed requests with 1–8 concurrent users on a T4 (scale run v1, run 1); visual checks in Chrome; races found in review fixed with regression tests |
-| The web app on a free Colab T4 (through Colab's port proxy) | 27 Oct: the notebook ran to the web-app cell without errors with GPU table detection on; a 64-page PDF processed in 79 s with live progress; a streamed, then checked answer with page citations in 11 s; the citation opened page 10 with the passage highlighted; a 250-page PDF processed in about 2 min and its page-17 table question answered correctly |
+| The web app on a free Colab T4 (through Colab's port proxy) | The notebook ran to the web-app cell without errors with GPU table detection on; a 64-page PDF processed in 79 s with live progress; a streamed, then checked answer with page citations in 11 s; the citation opened page 10 with the passage highlighted; a 250-page PDF processed in about 2 min and its page-17 table question answered correctly |
 | Streamed answers (text appears while written, then the checked answer replaces it) | first words after 0.47 s median with one user, 0.70 s with two (run 1, T4) |
 | Asking while a document is still being processed (answers say "first n of N pages") | askable 206 s after uploading a 1,000-page PDF with 96 pages indexed; the answer was correct and cited (run 1); final index byte-identical with or without partial queries (test) |
 | Several users: two answers at a time, then a first-come queue with visible position | load test 1–8 users, about 10.5 answers per minute on one T4 |
@@ -46,33 +46,32 @@ names the run behind each claim.
 | Clear user-facing messages (unchecked drafts labelled, "Not checked" answers, partial-index refusals, upload limits shown before sending) | an audit of 25 message cases; 12 fixed with 12 tests |
 | Phone layout | checked at 390 and 360 px in an emulated phone browser (Chromium); no horizontal scroll; touch targets enlarged to 40–44 px |
 | Docker image and Compose stack | `docker build` passed (6.5 GB, Tesseract eng/hin/mar); `docker compose up` with `docker-compose.cpu.yml` and `scripts/smoke_install.sh` passed with the real 7B model on a CPU host ([DEPLOY.md](DEPLOY.md#tested)) |
-| Project notebook `notebooks/Local_Agentic_RAG.ipynb` | executed top to bottom on a Kaggle T4 in 32 min (26 Oct) and 34.5 min with the GPU table-detection cell (27 Oct), no errors; earlier in a fresh free Colab T4 runtime (25 Oct) |
+| Project notebook `notebooks/Local_Agentic_RAG.ipynb` | executed top to bottom on a Kaggle T4 in 32 min and 34.5 min with the GPU table-detection cell, no errors; earlier in a fresh free Colab T4 runtime |
 | Gradio chat UI and HTML answer card | launched inline in Colab on a T4; a live chat turn returned a checked, cited answer (`docs/img/chat_ui_colab_t4.png`); follow-up questions rewritten from chat history |
 | Evaluation harness: metrics, bootstrap confidence intervals, resumable runner, reports | 118 tests; the benchmark validator reports 0 errors |
 
 ### Tests, CI and reviews
 
-* **Unit tests:** 879 passed, `ruff check` clean (29 Oct). The suite runs offline with fake models
+* **Unit tests:** 879 passed, `ruff check` clean. The suite runs offline with fake models
   (`pytest -q`).
 * **CI:** GitHub Actions runs lint and the offline tests on Python 3.10 and 3.12.
 * **Independent code reviews:** the first found 7 edge-case bugs (empty candidate pools,
   sub-query slot eviction, a stale verdict or hint, non-finite calculator results, the cache key, an
-  ablation config), all fixed with regression tests. The second (27 Oct) found 10 issues in the
+  ablation config), all fixed with regression tests. The second found 10 issues in the
   streaming, partial-index, auth and upload code; 9 were fixed with regression tests (chunk section
   number after an overflow, token and step event order, presupposition refusal flags, no second
   generation after a timeout, a partial-index race and duplicate builds, a quota bypass without
   Content-Length, quota charged for duplicates and rejections, API docs public in token mode). Later
   fixed: an over-quota or over-size upload was reported by some browsers and proxies as a closed
   connection; the page now asks `GET /api/upload-check` first and again after a network error.
-* **Docs checked against the evidence** (27 Oct): 29 discrepancies (stale limitations, run dates, a page
+* **Docs checked against the evidence**: 29 discrepancies (stale limitations, run dates, a page
   count) fixed.
 
 ### Evaluation status
 
 * English and multilingual development sets: current results in [RESULTS.md](RESULTS.md).
-* Held-out set 2 is complete: US Code Title 21 and the CAG Hindi report were each used once (run 3,
-  27 Oct), the GAO Cost Guide once (run 7, 29 Oct).
-* The 46 real-document questions were used twice (26 and 27 Oct); they are not a held-out set.
+* Held-out set 2 is complete: US Code Title 21 and the CAG Hindi report were each used once (run 3), the GAO Cost Guide once (run 7).
+* The 46 real-document questions were used twice; they are not a held-out set.
 * No-document control (run 7) and answer-model comparison (run 8) are done.
 
 ## Not done or not tested
@@ -132,53 +131,6 @@ names the run behind each claim.
 10. **Test documents:** the synthetic scale corpus is template prose; real long documents were four US
     federal publications plus the held-out set.
 11. **PyMuPDF is licensed AGPL-3.0**, which applies to anyone who redistributes this project.
-
-## Development history
-
-### Validation round on Kaggle (26 Oct)
-
-Colab's free GPU quota was used up, so this round ran on a Kaggle T4. Each change was measured on the GPU
-before being kept ([RESULTS.md section 10](RESULTS.md#round-by-round-tuning-on-kaggle-26-oct) has the
-round-by-round table and the noise check).
-
-| Change | Evidence it was needed | Measured (Kaggle T4) |
-|---|---|---|
-| Calculator operands grounded in the cited passage (row and column), stated changes skip the calculator, ID ranges counted deterministically, one retry for empty calculations | wrong cells (2.61/−3.52 for the GDP swing), a correct "+$6.8 billion" overridden, 8 of 9 actions counted | English 73.1% → 75.0% (BEA q13, NIST q10 fixed; NIST q11 regressed) |
-| Keep a cited answer when the model appends the "not found" marker | a correct, cited Hindi answer followed by the marker was scored as a refusal | multilingual 83.3% → 94.4% (Hinglish two-part and scanned-Hindi questions) |
-| Table captions attached to Markdown tables; table chunks no longer inherit the previous table's title | arXiv Table 2 (NQ) indistinguishable from the look-alike Table A.3; BEA Table 12 rows labelled "Table 10" | English 75.0% → 76.9%, table questions 9/12 → 10/12, page recall@5 94.2% → 96.2%; BEA q09 regressed |
-| Runner watchdog scoped to its own Ollama server | two servers (one per GPU) could restart each other's runner | parallel runs on 2 GPUs completed with no errors |
-| Notebook built into a temp dir by the tests, with stable cell ids | running the tests rewrote the committed notebook | rebuilding is byte-identical; a test catches a stale notebook |
-
-Result (notebook, top to bottom): English agent 76.9% [63.5–88.5] (single pass 71.2%), 9/9 unanswerable
-refused, citation precision 78.4%; multilingual 88.9–94.4% across two runs; GPU memory 8.9 of 15 GB.
-The numerical fixes of 27 Oct later raised English to 84.6%.
-
-### Improvement pass (25 Oct evening, Colab T4)
-
-Driven by the failure analysis of the previous full run (`scripts/failure_report.py`, also a notebook
-cell). Before/after numbers are in [RESULTS.md section 10](RESULTS.md#improvement-pass-on-a-fresh-colab-t4-25-oct-evening-notebook-run-all)
-and [section 8](RESULTS.md#improvement-pass-on-a-fresh-colab-t4-25-oct-same-20-questions); each fix has
-regression tests.
-
-| Change | Evidence it was needed | Measured after (fresh T4 run) |
-|---|---|---|
-| OCR via the Tesseract CLI at 300 dpi | scanned-page question failed; OCR text lost ~30% of Hindi words | word recall 0.70 → 0.99/1.00; scanned questions 1/2 → 2/2 |
-| Refusal detection (cited refusals, Hindi/Marathi phrases) | an unanswerable question was "answered" with a cited "the document does not say" | unanswerable refused 8/9 → 9/9, false refusals unchanged |
-| Calculator with fixed operations; result always stated | returned nothing for 16 × 16; model ignored its result | numerical 1/6 → 2/6 (one question); still picks wrong cells or the wrong operation |
-| Table headers / stacked rows | wrong values read from two BEA tables | values correct on the inspected tables; **retrieval recall@5 −1 question on BEA** (94.2% → 92.3%) |
-| Parse each PDF once per benchmark run | every ablation variant re-parsed | benchmark wall time 31 → 27 min |
-| Grader alias fix (multilingual q04) | correct "over a thousand" answer scored wrong | disclosed in `benchmark/multilingual/README.md` |
-| **Reverted:** stricter "refuse unless the exact fact is present" prompt rule | – | raised single-pass false refusals 3.8% → 21.2%; removed, a test keeps it out |
-
-Net: English answer accuracy unchanged (73.1%), multilingual 88.9% (equal to the re-graded before score),
-refusals and OCR improved, citation precision −1 to −5 points.
-
-### Multilingual support (added 25 Oct)
-
-Two bugs were found by running in Colab and fixed with regression tests: an English question got a Hindi
-answer because the answer-language instruction was too vague, and English questions were classified as
-Hinglish because "the" was in the Hinglish word list. Before the change, the keyword index dropped every
-non-ASCII character.
 
 ## Starting code
 

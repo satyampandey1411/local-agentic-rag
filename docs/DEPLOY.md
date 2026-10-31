@@ -19,7 +19,7 @@ Ollama registry).
   Ollama, the BGE-M3 embedder and the bge-reranker-v2-m3 reranker in the app). Cards with less
   memory than that are untested. Without a GPU the stack still works (`docker-compose.cpu.yml`,
   below) but only for light use: on a 16-core laptop CPU a one-page test PDF took 40 s from upload
-  to a cited answer once the models were downloaded (27 Oct); long documents were not tried on a CPU.
+  to a cited answer once the models were downloaded; long documents were not tried on a CPU.
 * **NVIDIA driver (GPU path):** the torch wheel pip installs today (2.14.1) is built for CUDA 13.0,
   which needs a recent host driver (the R580 series or newer). With an older driver the container
   starts but torch cannot use the GPU, so the embedder and reranker run on the CPU (`GET /api/health`
@@ -170,7 +170,7 @@ pip install "onnxruntime-gpu[cuda,cudnn]"
 export LOCAL_RAG_ONNX_GPU=1                     # then start the server as usual
 ```
 
-Measured on a Kaggle T4 (26–27 Oct 2026): a 1,000-page, table-heavy PDF parsed 1.89x faster
+Measured on a Kaggle T4: a 1,000-page, table-heavy PDF parsed 1.89x faster
 (224.7 s to 119.0 s) with byte-identical output. Each parse worker holds about 0.7 GB of GPU
 memory, so budget that per worker next to the language model (`LOCAL_RAG_PARSE_WORKERS`). If the
 CUDA provider cannot be loaded, the workers silently fall back to the CPU. The Colab notebook
@@ -275,17 +275,17 @@ Kaggle and Colab T4 runs, which cannot run Docker).
 | Same script, failure cases: server unreachable, non-PDF upload, unanswerable question (refused, no citation) | Each exits non-zero with a message |
 | `docker compose config -q` (syntax of `docker-compose.yml`) | Passed |
 | `LOCAL_RAG_OLLAMA_HOST` / `LOCAL_RAG_MODEL` defaults and flag override (`tests/test_server_cli.py`) | Passed |
-| `docker build` of the `Dockerfile` | **Passed** (27 Oct, Linux laptop, Docker 29.1): 6.5 GB image, Python 3.12, torch 2.14.1 (CUDA 13.0 build), Tesseract eng/hin/mar. First build 13 min; after a code change only the last layer is rebuilt |
-| `docker compose up`, including the model pull and `/api/health` OK | **Passed on the CPU** (27 Oct, with `docker-compose.cpu.yml`; the laptop has no NVIDIA GPU): Ollama healthy, `qwen2.5:7b-instruct` pulled (6 min), app healthy |
-| `scripts/smoke_install.sh` against the Compose stack (real 7B model, CPU) | **Passed** (27 Oct): "417 megawatts" with 1 citation on page 1. First run 8 min (downloads the embedder and reranker into the volume); warm run 40 s end to end |
+| `docker build` of the `Dockerfile` | **Passed** (Linux laptop, Docker 29.1): 6.5 GB image, Python 3.12, torch 2.14.1 (CUDA 13.0 build), Tesseract eng/hin/mar. First build 13 min; after a code change only the last layer is rebuilt |
+| `docker compose up`, including the model pull and `/api/health` OK | **Passed on the CPU** (with `docker-compose.cpu.yml`; the laptop has no NVIDIA GPU): Ollama healthy, `qwen2.5:7b-instruct` pulled (6 min), app healthy |
+| `scripts/smoke_install.sh` against the Compose stack (real 7B model, CPU) | **Passed**: "417 megawatts" with 1 citation on page 1. First run 8 min (downloads the embedder and reranker into the volume); warm run 40 s end to end |
 | GPU reservation in `docker-compose.yml` | **Not run** (no NVIDIA GPU or Container Toolkit on the test machine) |
 | GPU visibility inside the container (`--gpus all`), including the CUDA 13 driver requirement | **Not run** |
 | The pip + Ollama commands above on a clean machine | **Not run** (they are the project's existing commands plus the apt and Ollama installer steps) |
-| `scripts/smoke_install.sh` against a real Ollama model (answer text, `417` in the answer) | Passed on a Kaggle T4, 26 Oct (1 citation) |
+| `scripts/smoke_install.sh` against a real Ollama model (answer text, `417` in the answer) | Passed on a Kaggle T4 (1 citation) |
 | Colab notebook | Not re-run for this change; the notebook is unchanged. Earlier benchmark runs used the same code on a T4 (see README) |
 | `--token` / `LOCAL_RAG_TOKEN`: 401 without credentials, Bearer, cookie from `POST /api/session`, wrong token, health and static files public, SSE and page images with the cookie only, logout (`tests/test_server_auth.py`, FastAPI test client) | Passed |
 | One in-flight upload per address (429), daily quota (413), non-PDF bodies rejected by magic bytes (`tests/test_server_auth.py`) | Passed |
-| The browser login form and retry in `app.js` (JavaScript syntax checked with `node --check`) | Checked in Chrome against the demo server (26 Oct): 401, then the token form, then unlocked |
+| The browser login form and retry in `app.js` (JavaScript syntax checked with `node --check`) | Checked in Chrome against the demo server: 401, then the token form, then unlocked |
 | Cookie behaviour over real HTTPS (`Secure` flag, proxy `X-Forwarded-Proto`) | **Not run** (header logic only, unit-tested) |
 | Quota and 429 behind a reverse proxy (all users share the proxy address) | **Not run**, known limitation |
 | TLS / authentication proxy in front of the app | **Not run** |

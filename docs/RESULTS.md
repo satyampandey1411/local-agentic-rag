@@ -1,7 +1,7 @@
 # Results
 
 Every number on this page was measured with the code in this repository on NVIDIA Tesla T4 GPUs
-(free Google Colab and Kaggle), 25–31 Oct 2026. Nothing is extrapolated. [Section 11](#11-reproduce)
+(free Google Colab and Kaggle). Nothing is extrapolated. [Section 11](#11-reproduce)
 gives the commands.
 
 Two kinds of question sets are used, and they are kept apart throughout:
@@ -26,7 +26,7 @@ Two kinds of question sets are used, and they are kept apart throughout:
 | After the multi-language update | English 45/52, Hindi/Marathi 17/18: no drop | regression check, run 10 |
 | Documents never used for tuning | **15/18** GAO Cost Guide · **19/25** US Code Title 21 · **9/14** CAG Hindi report | held-out set 2, single use |
 | Long real documents (585–4,211 pages) | 30/37 answerable, 6/9 refused | used twice, not held out |
-| Right page in the top 5 | 73.1% (starting code) → **94.2%** (default) | English development set |
+| Right page in the top 5 | **94.2%** (default; a basic MiniLM search: 73.1%) | English development set |
 | 10,000-page PDF | ingested in 36.9 min, recall@5 0.889, answer accuracy 0.722 | synthetic scale corpus |
 | Several users | 0 failed requests from 1 to 8 users; about 10.5 answers per minute on one T4 | load test |
 | Streaming | first words after 0.5 s (median, one user) | load test |
@@ -37,21 +37,21 @@ presuppose something the document does not contain (6/9 refused).
 
 ### Where the numbers come from
 
-| Run | Date | Hardware | What it measured |
-|---|---|---|---|
-| Colab runs | 25 Oct | free Colab T4 | first end-to-end benchmarks, agent ablation, multilingual set, improvement pass |
-| Notebook validation | 26 Oct | Kaggle T4 | the project notebook top to bottom; round-by-round tuning |
-| Scale runs v1–v4 | 26 Oct | Kaggle T4 | synthetic tiers 100–10,000 pages, real documents, several users |
-| Run 1 | 26 Oct | Kaggle T4 | streaming, asking while a document is processed, regression |
-| Run 2 | 26–27 Oct | Kaggle T4 | section numbers for legal codes, table detection on the GPU, presupposition check |
-| Run 3 (final run) | 27 Oct | Kaggle T4 | real documents (final use), held-out Title 21 and CAG (single use), regression |
-| Run 4 | 27 Oct | Kaggle T4 | six scale tiers on the final code |
-| Runs 5 and 6 | 27 Oct | Kaggle T4 | numerical-question fixes |
-| Run 7 | 29 Oct | Kaggle T4 | no-document control, held-out GAO (single use), number fixes on unseen tiers |
-| Run 8 | 29 Oct | Kaggle T4 | answer-model comparison |
-| Run 9 | 31 Oct | Kaggle T4 x2 | many languages, development set; first held-out many-languages set (single use) |
-| Run 10 | 31 Oct | Kaggle T4 | English and Hindi/Marathi development sets on the updated code (regression check) |
-| Run 11 | 31 Oct | Kaggle T4 x2 | many languages on the final code; second held-out many-languages set (single use); Qwen3-8B and Gemma-3-12B on the same questions |
+| Run | Hardware | What it measured |
+|---|---|---|
+| Colab runs | free Colab T4 | first end-to-end benchmarks, agent ablation, multilingual set |
+| Notebook validation | Kaggle T4 | the project notebook top to bottom |
+| Scale runs v1–v4 | Kaggle T4 | synthetic tiers 100–10,000 pages, real documents, several users |
+| Run 1 | Kaggle T4 | streaming, asking while a document is processed, regression |
+| Run 2 | Kaggle T4 | section numbers for legal codes, table detection on the GPU, presupposition check |
+| Run 3 (final run) | Kaggle T4 | real documents (final use), held-out Title 21 and CAG (single use), regression |
+| Run 4 | Kaggle T4 | six scale tiers on the final code |
+| Runs 5 and 6 | Kaggle T4 | numerical-question fixes |
+| Run 7 | Kaggle T4 | no-document control, held-out GAO (single use), number fixes on unseen tiers |
+| Run 8 | Kaggle T4 | answer-model comparison |
+| Run 9 | Kaggle T4 x2 | many languages, development set; first held-out many-languages set (single use) |
+| Run 10 | Kaggle T4 | English and Hindi/Marathi development sets on the updated code (regression check) |
+| Run 11 | Kaggle T4 x2 | many languages on the final code; second held-out many-languages set (single use); Qwen3-8B and Gemma-3-12B on the same questions |
 
 Kaggle runs used one Tesla T4 (15,360 MiB) per process, as on free Colab. Numbers were read from each
 run's logs and result files.
@@ -133,14 +133,13 @@ Switching to the multilingual models does not cost English quality. BGE-M3 + bge
 gives the best top-1 recall (+6.7 points) and MRR. Recall@5 is one question lower than the
 English-only reranker.
 
-On the final notebook run (26 Oct, Kaggle T4; [section 4](#4-end-to-end-the-project-notebook-on-a-t4)):
+On the final notebook run (Kaggle T4; [section 4](#4-end-to-end-the-project-notebook-on-a-t4)):
 MiniLM 76.0% · BGE-en 80.8% · BM25 81.7% · hybrid-en 81.7% · hybrid-en + reranker 96.2% · BGE-M3 dense
-84.6% · **BGE-M3 hybrid + reranker (default) 94.2%** (recall@1 68.3%, MRR 0.883; it was 92.3% / 66.3% /
-0.872 before the table fixes).
+84.6% · **BGE-M3 hybrid + reranker (default) 94.2%** (recall@1 68.3%, MRR 0.883).
 
 ## 3. The agent: what the ablation taught us
 
-Measured on 2026-10-25 on a Colab T4, before the multilingual switch. 52 answerable + 9 unanswerable
+Measured on a Colab T4, before the multilingual switch. 52 answerable + 9 unanswerable
 English questions. Accuracy = every required fact present and not refused. Bootstrap 95% CI in brackets.
 
 | Metric | baseline | hybrid_rerank | agentic v2 (full loop) | agentic v3 (adaptive) | **agentic v4 (adaptive + calculator)** |
@@ -170,7 +169,7 @@ Accuracy by category:
 | numerical (6) | 0.17 | 0.00 | 0.00 | 0.00 | **0.17** |
 | unanswerable (9, refusal) | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 
-v4 ran on code from just before the independent review's edge-case fixes (see STATUS). Differences of
+v4 ran on code from just before the independent review's edge-case fixes. Differences of
 one question per category (definition, multi-hop, table between v3 and v4) are within run-to-run
 noise: greedy decoding on GPU is not bit-exact across runner restarts.
 
@@ -209,7 +208,7 @@ Fixes:
 
 ## 4. End-to-end: the project notebook on a T4
 
-Colab's free GPU quota was used up by the earlier runs, so the final validation (26 Oct) used a **Kaggle
+Colab's free GPU quota was used up by the earlier runs, so the final validation used a **Kaggle
 notebook with the same GPU (Tesla T4, 15,360 MiB)**, pinned to one T4 with
 `CUDA_VISIBLE_DEVICES=0`. The run is `notebooks/Local_Agentic_RAG.ipynb`, unchanged, plus
 one setup cell that copies the code to `/content`. It completed in 32 minutes:
@@ -220,7 +219,7 @@ one setup cell that copies the code to `/content`. It completed in 32 minutes:
 * retrieval ablation, English answer benchmark, multilingual benchmark, resource report.
 
 There were no errors. The memory watchdog restarted the Ollama runner 5 times and no question failed.
-These numbers are from before the numerical fixes of 27 Oct ([section 6](#6-numerical-question-fixes)).
+These numbers are from before the numerical fixes ([section 6](#6-numerical-question-fixes)).
 
 | English set (61 q) | single pass (`hybrid_rerank`) | **adaptive agent (default)** |
 |---|---:|---:|
@@ -239,12 +238,12 @@ Resources: GPU memory in use 9,069 of 15,360 MiB (LLM + embedder + reranker). Ol
 model pull and warm-up 134 s, retrieval models 61 s, retrieval ablation 113 s, English answer benchmark
 (2 configurations) 859 s, multilingual (2 configurations) 444 s, scanned 2-page Hindi OCR ingest 16 s.
 
-The same notebook ran top to bottom again on 27 Oct (Kaggle T4, one card, including the GPU
+The same notebook ran top to bottom again (Kaggle T4, one card, including the GPU
 table-detection cell) in 34.5 min without errors; 12 of 61 English questions failed, as before.
 
-### Setup and speed on a free Colab T4 (25 Oct)
+### Setup and speed on a free Colab T4
 
-Environment, verified in Colab on 2026-10-25: Tesla T4 15,360 MiB, driver 580,
+Environment, verified in Colab: Tesla T4 15,360 MiB, driver 580,
 CUDA 13.0, Python 3.13.16, torch 2.11.0+cu130, transformers 5.20.2,
 sentence-transformers 5.7.0, gradio 6.30.0 (preinstalled). `pip install -e .[colab]`
 adds pymupdf 2.0 and changes no preinstalled package.
@@ -278,7 +277,7 @@ proof that the answer is wrong.
 
 ## 6. Numerical-question fixes
 
-27 Oct, Kaggle T4, runs 5 and 6. The six numerical questions of the English set failed mostly on the wrong *measure* (a
+Kaggle T4, runs 5 and 6. The six numerical questions of the English set failed mostly on the wrong *measure* (a
 year-over-year change for an annualized rate, a percent change for a dollar amount, a contribution
 for a growth rate) or the wrong cell of the right table; the arithmetic itself was never wrong.
 Four fixes were added behind flags (`config.py`) and measured on the development sets only (English 61 q,
@@ -318,7 +317,7 @@ multilingual 20 q); the held-out sets were not used.
 
 ## 7. Which answer model?
 
-29 Oct, Kaggle T4, run 8, development sets only. Same retriever, reranker, prompts and default agent; only
+Kaggle T4, run 8, development sets only. Same retriever, reranker, prompts and default agent; only
 the Ollama answer model changes. Peak GPU memory includes BGE-M3 and the reranker. English set 61 questions
 (52 answerable + 9 unanswerable), multilingual 20.
 
@@ -343,12 +342,11 @@ Set: `benchmark/multilingual/` has 20 questions (hi 9, en 4, hinglish 3, mr 4; 2
 over a Hindi Wikipedia article (8 pp), a Marathi article (3 pp), an image-only scan of 2 Hindi pages
 (OCR), and the English arXiv paper asked in Hindi/Hinglish. Facts were validated on evidence pages.
 
-**Latest results.** Run 8 (29 Oct, default system): 17/18 answerable correct (Hindi 8/8, Hinglish 3/3,
-Marathi 3/3, English questions about the Hindi/Marathi documents 3/4), 2/2 unanswerable refused. Run 1
-(26 Oct): 94.4% (17/18; Hindi 9/9, Hinglish 3/3, Marathi 4/4). Across runs of the final code the score
+**Latest results.** Run 8 (default system): 17/18 answerable correct (Hindi 8/8, Hinglish 3/3,
+Marathi 3/3, English questions about the Hindi/Marathi documents 3/4), 2/2 unanswerable refused. Run 1: 94.4% (17/18; Hindi 9/9, Hinglish 3/3, Marathi 4/4). Across runs of the final code the score
 was 88.9–94.4%; the set is small, so one question is 5.6 points.
 
-**Notebook run on a T4 (26 Oct):**
+**Notebook run on a T4:**
 
 | Multilingual set (20 q) | agentic (default) | agentic with English-only models |
 |---|---:|---:|
@@ -373,66 +371,7 @@ Tesseract is not installed on the development machine; they are scored in the T4
 
 Multilingual default: recall@1 80.6%, MRR 0.889.
 
-### Improvement pass on a fresh Colab T4 (25 Oct, same 20 questions)
-
-| | agentic, before | **agentic, after (default)** | agentic_en, after |
-|---|---:|---:|---:|
-| Answer accuracy (18 answerable) | 83.3% (15/18; 88.9% re-graded with the corrected q04 alias) | **88.9%** (16/18) [72–100] | 88.9% |
-| Unanswerable refused | 2/2 | 2/2 | 2/2 |
-| False refusals | 11.1% | 5.6% | 5.6% |
-| Page recall@5 / MRR | 0.944 / – | **1.000 / 0.972** | 0.944 / 0.880 |
-| Citation precision | 85.4% | 91.2% | 92.2% |
-| Scanned Hindi (OCR) questions | 1/2 | **2/2** | 2/2 |
-| Latency p50 | 13.5 s | 11.0 s | 8.2 s |
-
-After, by question language (default): Hindi 8/8 (incl. both scanned-page questions), Hinglish 2/3, Marathi 3/3,
-English questions about the Hindi/Marathi documents 3/4. The two misses: a Hinglish two-part question that was
-refused although its evidence pages were retrieved, and an English question needing 16 × 16 = 256 that the
-calculator computed as a sum (16 + 16). On equal grading the overall score is unchanged (88.9% → 88.9%); the OCR
-fix gained the scanned question, and Hinglish lost one. English-only models with the same agent again tie on
-answers but retrieve worse (recall@5 0.944 vs 1.000).
-
-### First end-to-end run on the T4 (25 Oct, before the improvement pass)
-
-Default config (adaptive agent, BGE-M3 + bge-reranker-v2-m3, translated lead query, Qwen2.5-7B),
-fresh Colab T4 run, 20 questions (18 answerable, 2 unanswerable):
-
-| Slice | n | Answer accuracy | Other |
-|---|---:|---:|---|
-| **Overall** | 20 | **83.3%** (15/18) | unanswerable refused 2/2 · false refusals 11.1% (2/18) · citation precision 85.4% · page recall@5 94.4% · p50 13.5 s |
-| Hindi questions | 9 | 87.5% (7/8) | refusal 1/1 · recall@5 0.88 |
-| Hinglish questions | 3 | **100%** | recall@5 1.00 |
-| Marathi questions | 4 | **100%** | refusal 1/1 |
-| English questions about the Hindi/Marathi docs | 4 | 50% (2/4) | recall@5 1.00, so the evidence was found and the failures are in answering |
-| By document: English paper asked in Hindi/Hinglish | 3 | 100% | |
-| By document: Hindi article (text) | – | 86% | |
-| By document: Marathi article | – | 83% | |
-| By document: **scanned Hindi (OCR)** | 2 | 50% (1/2) | OCR worked (2 pages, 12 chunks), and one evidence page ranked low |
-
-**Ablation: same agent, English-only retriever (`agentic_en`), same run:**
-
-| | English-only models + agent | Multilingual default |
-|---|---:|---:|
-| Answer accuracy (18 answerable) | 83.3% | 83.3% |
-| Page recall@5 | 0.889 | **0.944** |
-| Hindi questions: accuracy / recall@5 | 0.88 / 0.75 | 0.88 / **0.88** |
-| Hinglish accuracy | 0.67 | **1.00** |
-| Marathi accuracy | 1.00 | 1.00 |
-| English → Indic doc accuracy | **0.75** | 0.50 |
-| Citation precision | **87.5%** | 85.4% |
-| Latency p50 | **9.9 s** | 13.5 s |
-
-Reading: at the answer level the two are **tied on this 20-question set**. The
-query-translation step does much of the cross-language work even with English-only models. The
-multilingual models clearly improve *retrieval* (recall@5 +5.5 points, Hindi +13) and Hinglish, and
-lose one English→Indic question. A larger multilingual set is needed to separate them.
-
-What this supports: cross-language retrieval works (recall@5 0.94 including OCR pages), and answers
-come back in the question's language (Hindi → Hindi, Hinglish → Hinglish, Marathi → Marathi; see
-`docs/img/multilingual_answers_colab_t4.png`). Weak spots: English questions about Indic documents
-(2/4), and OCR'd pages. The set is tiny (20 questions), so each question is 5 points.
-
-## 8b. Many languages (31 Oct)
+## 8b. Many languages
 
 **Why.** The questions people actually ask: a PDF in Sanskrit, Bhojpuri, Urdu or Telugu; a question in a
 different language from the book (Telugu about a Sanskrit book, English about a Hindi book); "answer
@@ -621,22 +560,22 @@ is written in about 30 languages; OCR picks its language per page; legacy Hindi 
 moves 25 points per question. The questions in Sanskrit, Awadhi, Maithili, Bhojpuri, Odia,
 Malayalam, Arabic, Japanese and Russian were written by a non-native speaker and kept short.
 
-**English and Hindi/Marathi sets with the multi-language code (run 10, 31 Oct, Kaggle T4).** English
+**English and Hindi/Marathi sets with the multi-language code (run 10, Kaggle T4).** English
 **45/52 (86.5%)**, 9/9 unanswerable refused, no false refusals, right page in the top 5 for 96.2%,
 median 6.1 s; Hindi/Marathi set **17/18**, 2/2 refused, one false refusal. Both match the earlier
 results on these sets (44/52 and 17/18) within run-to-run noise.
 
 ## 9. Real documents, held-out documents and the no-document control
 
-Full tables and method: [SCALE.md](SCALE.md#real-documents-and-held-out-set-2-final-run-kaggle-t4-27-oct).
+Full tables and method: [SCALE.md](SCALE.md#real-documents-and-held-out-set-2-final-run-kaggle-t4).
 
 | Measurement | Result |
 |---|---|
-| **No-document control** (run 7, 29 Oct): the 61 English questions asked to Qwen2.5-7B with no passages | **1/52 answerable correct (1.9%)**, 9/9 unanswerable refused; 46 of 52 declined. With the documents the same model gets 44/52, so the answers come from retrieval, not from memory |
-| **Held-out set 2, GAO Cost Estimating and Assessment Guide** (run 7, 29 Oct, 476 pages; first and only use; current default) | **15/18 answerable correct**, 2/4 unanswerable refused, page recall@5 1.000, MRR 0.972, citation precision 0.792, answer p50 5.4 s, ingest 145 s |
-| **Held-out set 2, US Code Title 21** (run 3, 27 Oct; single use) | 19/25 answerable, 4/5 unanswerable refused, page recall@5 0.917, MRR 0.769, citation precision 0.741; questions naming a section 8/9 |
+| **No-document control** (run 7): the 61 English questions asked to Qwen2.5-7B with no passages | **1/52 answerable correct (1.9%)**, 9/9 unanswerable refused; 46 of 52 declined. With the documents the same model gets 44/52, so the answers come from retrieval, not from memory |
+| **Held-out set 2, GAO Cost Estimating and Assessment Guide** (run 7, 476 pages; first and only use; current default) | **15/18 answerable correct**, 2/4 unanswerable refused, page recall@5 1.000, MRR 0.972, citation precision 0.792, answer p50 5.4 s, ingest 145 s |
+| **Held-out set 2, US Code Title 21** (run 3; single use) | 19/25 answerable, 4/5 unanswerable refused, page recall@5 0.917, MRR 0.769, citation precision 0.741; questions naming a section 8/9 |
 | **Held-out set 2, CAG Hindi GST report** (run 3; answers only) | 9/14 answerable (Hindi 6/7, Hinglish 2/3, English 1/4); 2/4 unanswerable refused, checked against the executive summary only |
-| **The 46 real-document questions** (run 3; second and final run on this set; three fixes were informed by its first-run failures, so not held out) | **30/37 answerable correct** (26/37 before the 26–27 Oct fixes), 6/9 unanswerable refused (unchanged). 9/11 Report 12/12 (was 11/12), Statistical Abstract 11/13 (was 9/13), US Code Title 26 7/12 (same as run 2) |
+| **The 46 real-document questions** (run 3; second and final run on this set; three fixes were informed by its first-run failures, so not held out) | **30/37 answerable correct**, 6/9 unanswerable refused. 9/11 Report 12/12, Statistical Abstract 11/13, US Code Title 26 7/12 |
 | "Which table" questions, Statistical Abstract (run 3) | 5/6 correct (wrong: statab-q10) |
 | Statistical Abstract parse (run 3) | 521 s (8.7 min), ingest 942 s; earlier 17.5 min parse / 23.8 min ingest with CPU table detection while two documents ran at once on the same 4 vCPUs, so not a like-for-like comparison |
 | Regression on the same run | English 76.9% (same 12 failures), multilingual 94.4% |
@@ -645,9 +584,9 @@ The GAO PDF could not be downloaded on Kaggle (gao.gov refused it), so it was do
 attached unchanged as a dataset (sha256 starts `9df790d257e8dadb`). Title 21 and CAG ran on the default of the
 time, before the numerical fixes.
 
-## 10. Long documents, several users and earlier rounds
+## 10. Long documents and several users
 
-### Long documents and several users (26–27 Oct)
+### Long documents and several users
 
 Full tables and method: [SCALE.md](SCALE.md). All measured on a Kaggle Tesla T4, one GPU per process.
 
@@ -655,134 +594,25 @@ Full tables and method: [SCALE.md](SCALE.md). All measured on a Kaggle Tesla T4,
 |---|---|
 | Synthetic PDFs, 100 → 10,000 pages, 40 independent questions each (scale run v1) | answer accuracy 0.750 → 0.722 (answerable), page recall@5 0.972 → 0.889, answer p50 6.5 → 6.4 s |
 | Ingestion, 10,000 pages (58% table pages), 2 parse workers (scale run v1) | 71 min (2.3 pages/s), 53,862 chunks, index 188 MB, cold load 0.7 s, retrieval GPU memory 2.4 GB |
-| Six tiers again on the final code with table detection on the GPU (run 4, 27 Oct) | All six passed: recall@5 0.972 → 0.889 and answer accuracy 0.69–0.75 from 100 to 10,000 pages, identical to run v1; refusals 3/4–4/4; answer p50 6.0–6.8 s. 10,000 pages ingested in 36.9 min (4.5 pages/s; 4,237 s with CPU table detection in run v2). Crash isolation and resume passed at every tier. Peak RAM 5.6–9.4 GB |
+| Six tiers again on the final code with table detection on the GPU (run 4) | All six passed: recall@5 0.972 → 0.889 and answer accuracy 0.69–0.75 from 100 to 10,000 pages, identical to run v1; refusals 3/4–4/4; answer p50 6.0–6.8 s. 10,000 pages ingested in 36.9 min (4.5 pages/s; 4,237 s with CPU table detection in run v2). Crash isolation and resume passed at every tier. Peak RAM 5.6–9.4 GB |
 | Failure recovery at every tier (killed worker + job interrupted half-way) | resumed from the checkpoint; index identical to a clean run except the crashed page; +1.4% total time at 10,000 pages |
 | Real PDFs, first run (9/11 Report, Statistical Abstract, US Code Title 26; 46 independent questions) | 26/37 answerable correct (70%), 6/9 unanswerable refused; US Code weakest (6/12; 7/12 after the section fix in run 2, not held out) |
 | Web server, 1–8 concurrent users | 0 failed requests; about 10.5 answers/min on one T4; p50 latency 13 s (1 user) → 45 s (8 users, queueing) |
 | The English and multilingual sets on the new architecture | English 76.9% with the same 12 failures, multilingual 94.4%: no regression |
 | Project notebook, top to bottom on one T4, with the new progress line and web-app cell | completed in 32.7 min with no errors; same 12/61 English failures |
 
-**Run 1 (26 Oct, Kaggle T4).** Regression check after adding token streaming, asking while a document is
+**Run 1 (Kaggle T4).** Regression check after adding token streaming, asking while a document is
 processed, "which table" naming and the access token, with the default agent: **English 76.9%** (the same
 12 failures as before; table questions 10/12, numerical 2/6), unanswerable 9/9, citation precision 78.4%;
 **multilingual 94.4%** (17/18; Hindi 9/9, Hinglish 3/3, Marathi 4/4). No regression. Streaming: first words
-after 0.5 s (median, one user). Details: [SCALE.md](SCALE.md#streaming-asking-while-processing-and-regression-run-1-kaggle-t4-26-oct).
+after 0.5 s (median, one user). Details: [SCALE.md](SCALE.md#streaming-asking-while-processing-and-regression-run-1-kaggle-t4).
 
-**Run 2 (26–27 Oct, Kaggle T4).** Section numbers on chunks (US Code Title 26): sections identified
+**Run 2 (Kaggle T4).** Section numbers on chunks (US Code Title 26): sections identified
 355 → 1,877, page recall@5 0.75 → 0.92, answerable 6/12 → 7/12 (not held out: this document was used to find
 the cause; 5 of 12 are still wrong). The layout model on the GPU parsed a 1,000-page table-heavy PDF 1.89x
 faster (224.7 s → 119.0 s) with identical output. The presupposition check stayed off: no gain, and false
 refusals rose from 1.9% to 3.8%. The two-slot Ollama load test is confounded (a second copy of the model
-shared the GPU), so one slot is kept. Details: [SCALE.md](SCALE.md#legal-sections-table-detection-on-the-gpu-presupposition-check-run-2-kaggle-t4-2627-oct).
-
-### Round-by-round tuning on Kaggle (26 Oct)
-
-Each round ran the default agent on both development sets; changes were kept only when the numbers held.
-
-| Round | Change | English | Multilingual |
-|---|---|---:|---:|
-| Baseline | `main` as of 2026-10-25 (reproduces the last Colab run exactly: same 14 failures) | 73.1% | 83.3% (15/18) |
-| it1 | calculator grounding: operands must sit on the cited row and column; stated changes skip it; ID ranges counted | 75.0% | 83.3% |
-| it2 (×2) | + keep a cited answer that ends with the "not found" marker | 75.0% / 75.0% | 94.4% / 94.4% |
-| it3 | + table captions and correct table section labels | 76.9% | 94.4% |
-| Final notebook | + one retry when an arithmetic question gets no calculation | **76.9%** | **88.9%** |
-
-* **Noise.** The two it2 runs used identical code and failed exactly the same questions,
-  so single-question changes in the English agent column are real. The multilingual set
-  is noisier: one Hindi question flipped between it3 and the final run (the planner
-  returned invalid JSON once and fell back). On the final code, multilingual is
-  **88.9–94.4%** across two runs. Single pass varied by two questions (67.3% vs 71.2%).
-* **What each fix bought.**
-  * Captions: the model now tells arXiv Table 2 (NQ) from the look-alike Table A.3, which
-    fixed q06, q11 and q13.
-  * Trailing-marker fix: the Hinglish two-part question and the scanned-Hindi question
-    were correct answers that had been discarded.
-  * Calculator: fixed BEA q13 (no longer overrides "increased $6.8 billion") and NIST q10
-    (9 actions across a page break).
-* **What got worse.**
-  * BEA q09 regressed: its page lost rank once its *wrong* section label was corrected.
-    This was predicted by the CPU retrieval check.
-  * BEA q13 regressed again in it3: the level ($3,929.7 billion) sits on page 17, which
-    dropped out of the top passages.
-  * NIST q11 ("months between") passes on `main` but not after the calculator change: the
-    first calculator call returns nothing and the generator refuses. In one traced run the
-    agent's second round computed the right 18 months. A retry for empty calculations was
-    then added, but the final run still refused this question (fixed on 27 Oct, [section 6](#6-numerical-question-fixes)).
-* **Caveat.** These fixes were designed after reading the failures of this same benchmark,
-  so gains on exactly those questions overstate how well they generalise. The fixes
-  themselves are generic (operand grounding, caption attachment, sentinel handling), but
-  the benchmark is not a held-out test of them.
-
-English failures after this round (12; four were fixed on 27 Oct):
-* numerical: wrong table cell chosen (arXiv q10, BEA q09, q10) and NIST q11;
-* table: BEA q06 (GDP-level rows never reach the candidate pool) and BEA q08 (right page
-  retrieved, wrong value);
-* multi-hop: arXiv q14 (needs pages 8 and 12), BEA q11, BEA q13, NIST q13 (one of two
-  listed characteristics missing);
-* comparison: BEA q15 (revision values) and NIST q15 (definition on page 14 not used).
-
-### Improvement pass on a fresh Colab T4 (25 Oct evening, notebook "Run all")
-
-This pass analysed every failed question of the previous run (below) and changed only what that
-evidence pointed to: Tesseract-CLI OCR, refusal detection, a calculator with fixed operations whose result is
-always stated, table header/row fixes, and parsing each PDF once per benchmark run. Same 61 questions, same LLM.
-
-| Metric | single pass, before | **single pass, after** | agent, before | **agent, after (default)** |
-|---|---:|---:|---:|---:|
-| Answer accuracy [95% CI] | 69.2% | **69.2%** [55.8–80.8] | 73.1% | **73.1%** [61.5–84.6] |
-| Fact recall | 72.8% | 73.7% | 75.6% | 77.2% |
-| False refusal rate | 3.8% | 3.8% | 1.9% | 1.9% |
-| Unanswerable correctly refused | 8/9 | **9/9** | 8/9 | **9/9** |
-| Citation precision | 74.3% | 69.3% | 74.8% | 73.5% |
-| Page recall@5 (answer run) | 94.2% | 92.3% | – | 93.3% |
-| Latency p50 / p95 | 3.7 / 5.9 s | 2.8 / 4.7 s | 8.7 / 32.4 s | 6.4 / 33.0 s |
-| Errors | 0 | 0 | 0 | 0 |
-
-Agent accuracy by category, before → after: factual 1.00 → 1.00 · definition 1.00 → 1.00 · table 0.75 → 0.75 ·
-comparison 0.67 → 0.67 · multi-hop 0.56 → **0.44** · numerical 0.17 → **0.33** · unanswerable 0.89 → **1.00**.
-
-Reading:
-* **Refusals improved** (9/9 unanswerable refused in both modes, with no rise in false refusals).
-* **Answer accuracy did not move** (73.1% → 73.1%). Numerical gained one question (2/6) and multi-hop lost one (4/9);
-  both are single questions, inside run-to-run noise.
-* **Citation precision fell** 1–5 points, and **retrieval recall@5 fell by one question** (94.2% → 92.3% in the
-  retrieval ablation, all on the BEA tables document). Most likely cause: the table-row changes alter BEA table
-  chunks (BEA recall@5 0.85 with the previous table code in a local CPU run vs 0.79 now on the T4). A per-question comparison of the old and new table code (same CPU machine) pins it on BEA q06
-  (nominal GDP level): its evidence page 15 drops out of the top 5 (recall 0.5 → 0.0), although the new code now reads
-  that table's values correctly. We report it rather than revert, because the
-  same changes fixed wrong values on two BEA tables.
-* **A regression we caused and reverted:** a stricter prompt rule ("if the specific fact is not in the passages, reply
-  exactly <not found>: do not describe related content") raised single-pass false refusals from 3.8% to 21.2%
-  (accuracy 61.5%) in the first run of this pass. We removed it, kept a test that it stays out, and re-ran everything.
-* The remaining 14 agent failures (failure report cell in the notebook) are mostly wrong table cells chosen as
-  numbers (e.g. 2.61 and -3.52 instead of -0.6 and 3.8 for the GDP swing), plus one retrieval miss (BEA q06).
-
-Retrieval ablation after the pass (fresh T4): starting code 73.1% · MiniLM 73.1% · BGE-en 79.8% · BM25 82.7% ·
-hybrid-en 81.7% · hybrid-en + reranker **96.2%** · BGE-M3 dense 83.7% · BGE-M3 hybrid + reranker (default) 92.3%
-(recall@1 66.3%, MRR 0.872).
-
-### Before the improvement pass (25 Oct, fresh Colab T4, multilingual models)
-
-Measured in a fresh Colab T4 runtime ("Run all"), 61 questions.
-
-| Metric | hybrid_rerank (multilingual retriever, single pass) | **agentic (adaptive + calculator + translation; default)** |
-|---|---:|---:|
-| Answer accuracy [95% CI] | 69.2% [55.8–80.8] | **73.1%** [59.6–84.6] |
-| Fact recall | 72.8% | **75.6%** |
-| False refusal rate | 3.8% | **1.9%** |
-| Unanswerable correctly refused | 88.9% (8/9) | 88.9% (8/9) |
-| Citation precision | 74.3% | 74.8% |
-| Errors | 0 | 0 |
-| Latency p50 / p95 | **3.7 / 5.9 s** | 8.7 / 32.4 s |
-
-Accuracy by category (single pass / agent): factual 1.00 / 1.00 · definition 1.00 / 1.00 ·
-table 0.75 / 0.75 · comparison 0.67 / 0.67 · multi-hop 0.44 / **0.56** · numerical 0.00 / **0.17** ·
-unanswerable (refusal) 0.89 / 0.89.
-
-Compared with the earlier English-only retriever ([section 3](#3-the-agent-what-the-ablation-taught-us)), the
-multilingual default held English accuracy (73.1% vs 75.0% for v4, within noise). It cut false refusals further
-(1.9%), but it answered one of the 9 unanswerable questions instead of refusing (earlier runs refused all 9). That
-regression was fixed in the improvement pass above.
+shared the GPU), so one slot is kept. Details: [SCALE.md](SCALE.md#legal-sections-table-detection-on-the-gpu-presupposition-check-run-2-kaggle-t4).
 
 ## 11. Reproduce
 
