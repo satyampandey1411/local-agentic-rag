@@ -103,7 +103,7 @@ We do **not** reinstall `torch` or `numpy`: Colab's builds already match its CUD
 and replacing them is the most common way to break a Colab runtime.
 """),
     code(r"""
-REPO_URL = ""                                   # e.g. "https://github.com/<you>/local-agentic-rag.git" (optional)
+REPO_URL = "https://github.com/satyampandey1411/local-agentic-rag.git"  # "" = use an uploaded zip
 REPO_ZIP = "/content/local-agentic-rag.zip"     # used when REPO_URL is empty
 REPO_DIR = "/content/local-agentic-rag"
 FAST_TABLE_DETECTION = True                     # GPU table detection for PDFs (needs a GPU; falls back to the CPU)

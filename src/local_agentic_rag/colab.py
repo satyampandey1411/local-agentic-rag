@@ -696,6 +696,8 @@ def launch_web_app(
     library_dir: str = "/content/library",
     port: int = 8000,
     max_concurrent_asks: int = 1,
+    height: int = 820,
+    tab_link: bool = False,
 ):
     """Start the document-library web app in a background thread, sharing ``pipe``'s models.
 
@@ -725,7 +727,17 @@ def launch_web_app(
 
         # The iframe form is Colab's recommended one; "as_window" now warns that browser
         # security changes may break it.
-        output.serve_kernel_port_as_iframe(port, height=820)
+        output.serve_kernel_port_as_iframe(port, height=height)
+        if tab_link:
+            try:  # Colab's own proxy URL for the port; it works only for the signed-in user
+                url = output.eval_js(f"google.colab.kernel.proxyPort({port})")
+                from IPython.display import HTML, display
+
+                display(
+                    HTML(f'<p><a href="{url}" target="_blank">Open the app in its own tab</a></p>')
+                )
+            except Exception:  # the frame above still works
+                pass
     else:
         print(f"Web app running at http://127.0.0.1:{port}/")
     return library, server
