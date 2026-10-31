@@ -180,7 +180,6 @@ def needs_arithmetic(question: str) -> bool:
 
 # --------------------------------------------------------------------------- grounding
 
-_DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 # A number in passage text.  Digits glued to letters or joined by a hyphen to a word are
 # names, not values: "gpt-4o", "Recall@10", "Q2", "MS-2.7-001".
 _TEXT_NUM_RE = re.compile(r"(?<![\w.@])(?<!\w-)(\d[\d,]*(?:\.\d+)?|\.\d+)(?![\w@]|\.\d|-\w)")
@@ -288,7 +287,7 @@ def _table_rows(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
 
 def _check_in_passage(value: float, label: str, text: str) -> tuple[bool, str]:
     """(found, problem): problem is "" when one occurrence of ``value`` fits ``label``."""
-    text = text.translate(_DEVANAGARI_DIGITS)
+    text = text.translate(lang.DIGITS_TO_ASCII)
     if not any(_same(x, value) for x in _numbers_in(text)):
         return False, ""
     rows = _table_rows(text)
@@ -367,7 +366,7 @@ def align_cell(value: float, label: str, text: str) -> tuple[float, str, str] | 
       value sits on another row that the label also names in full (then it stays);
     * the named cell does not hold exactly one number.
     """
-    text = text.translate(_DEVANAGARI_DIGITS)
+    text = text.translate(lang.DIGITS_TO_ASCII)
     rows = _table_rows(text)
     if not rows:
         return None
@@ -495,7 +494,7 @@ def cell_measure(text: str, value: float | None = None) -> list[tuple[str, bool,
     ("Percentage points at annual rates | Mining"), then the passage's non-table lines
     (the table title, e.g. "Table 6. ... Percent Change from Quarter One Year Ago").
     """
-    text = text.translate(_DEVANAGARI_DIGITS)
+    text = text.translate(lang.DIGITS_TO_ASCII)
     rows = _table_rows(text)
     table_lines = {line for line, _, _ in rows}
     title = " ".join(line for line in text.splitlines() if line not in table_lines)
@@ -541,9 +540,9 @@ def measure_conflict(question: str, value: float, text: str) -> str:
     want = question_measure(question)
     if not any(want.values()):
         return ""
-    rows = _table_rows(text.translate(_DEVANAGARI_DIGITS))
+    rows = _table_rows(text.translate(lang.DIGITS_TO_ASCII))
     table_lines = {line for line, _, _ in rows}
-    for line in text.translate(_DEVANAGARI_DIGITS).splitlines():
+    for line in text.translate(lang.DIGITS_TO_ASCII).splitlines():
         if line not in table_lines and any(_same(x, value) for x in _numbers_in(line)):
             return ""  # stated in a sentence: the sentence carries its own measure
     reasons = [_conflict(want, *found) for found in cell_measure(text, value)]

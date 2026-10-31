@@ -19,8 +19,19 @@ import numpy as np
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:[.\-][a-z0-9]+)*")
 # Any-script words: letters/digits plus combining marks (Indic vowel signs are marks,
-# not letters, so a plain \w+ would split "भारत" style words at every matra).
-_UNICODE_WORD_RE = re.compile(r"(?:[^\W_]|[\u0300-\u036f\u0900-\u0dff\u0e00-\u0e7f])+")
+# not letters, so a plain \w+ would split "भारत" style words at every matra), Arabic
+# harakat and the zero-width (non-)joiners used inside Urdu, Persian and Malayalam words.
+# The danda (।, ॥) is a full stop, not part of the word before it.
+_UNICODE_WORD_RE = re.compile(
+    r"(?:[^\W_]|[\u0300-\u036f\u0900-\u0963\u0966-\u0dff\u0e00-\u0e7f"
+    r"\u0e80-\u0eff\u1000-\u109f\u1780-\u17ff\u064b-\u065f\u0670\u200c\u200d])+"
+)
+# Scripts written without spaces between words: indexed as character bigrams (plus single
+# characters for Chinese/Japanese ideographs, which are often words on their own).
+_IDEOGRAPH_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_SPACELESS_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u0e00-\u0e7f\u0e80-\u0eff\u1000-\u109f\u1780-\u17ff]+"
+)
 
 _STOPWORD_TEXT = """a an and are as at be but by for from has have how in is it its of on or that the
     their there these this to was were what when where which who why will with does did do
@@ -41,16 +52,28 @@ def _stem(token: str) -> str:
     return token
 
 
+def _spaceless_tokens(run: str) -> list[str]:
+    out = [ch for ch in run if _IDEOGRAPH_RE.match(ch)]
+    out.extend(run[i : i + 2] for i in range(len(run) - 1))
+    return out or [run]
+
+
 def tokenize(text: str) -> list[str]:
-    text = unicodedata.normalize("NFC", text).lower()
+    # NFKC also folds Arabic presentation forms (how some PDFs store Urdu) into letters.
+    text = unicodedata.normalize("NFKC", text).lower()
     out: list[str] = []
     for word in _UNICODE_WORD_RE.findall(text):
         if word.isascii():
             continue  # ASCII handled below with the code/decimal-aware tokenizer
-        if all("\u4e00" <= ch <= "\u9fff" for ch in word):
-            out.extend(word)  # CJK has no spaces: index characters
-        else:
-            out.append(word)
+        word = word.replace("\u200c", "").replace("\u200d", "")
+        pos = 0
+        for m in _SPACELESS_RE.finditer(word):
+            if m.start() > pos:
+                out.append(word[pos : m.start()])
+            out.extend(_spaceless_tokens(m.group()))
+            pos = m.end()
+        if pos < len(word):
+            out.append(word[pos:])
     for tok in _TOKEN_RE.findall(text):
         if tok in STOPWORDS:
             continue

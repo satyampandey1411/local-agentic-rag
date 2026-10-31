@@ -24,15 +24,20 @@ import numpy as np
 
 from local_agentic_rag.agent.calculator import question_measure, table_conflicts
 from local_agentic_rag.config import RAGConfig
+from local_agentic_rag.lang import to_ascii_digits
 from local_agentic_rag.retrieval.embedder import Embedder
 from local_agentic_rag.retrieval.index import DocumentIndex
 from local_agentic_rag.retrieval.reranker import Reranker
 from local_agentic_rag.schema import Chunk, ScoredChunk
 
-_NUM = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+|[०-९]+)"  # "4,512" is one number, "3,4" is two
+_NUM = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|\d+)"  # "4,512" is one number, "3,4" is two; any digits
 _ITEM = rf"{_NUM}(?:\s*(?:-|–|to|से|ते)\s*{_NUM})?"  # a page or a range
 _PAGE_REF_RE = re.compile(
-    r"(?:\bpages?|\bpp?\.|\bpg\.?|पृष्ठ|पेज|पान)\s*(?:no\.?|number|संख्या|क्रमांक)?\s*"
+    # page, पृष्ठ/पेज/पान, صفحہ/صفحة, পৃষ্ঠা, ਪੰਨਾ, પાનું/પૃષ્ઠ, ପୃଷ୍ଠା, பக்கம், పేజీ/పుట, ಪುಟ, പേജ്,
+    # página, Seite, страница, ページ
+    r"(?:\bpages?|\bpp?\.|\bpg\.?|पृष्ठ|पेज|पान|صفحہ|صفحة|পৃষ্ঠা|ਪੰਨਾ|ਪੰਨੇ|પાનું|પૃષ્ઠ|ପୃଷ୍ଠା|"
+    r"பக்கம்|పేజీ|పుట|ಪುಟ|പേജ്|página|seite|страниц[аеыу]|ページ)"
+    r"\s*(?:no\.?|number|संख्या|क्रमांक|نمبر|رقم|nº|n°|№)?\s*"
     rf"({_ITEM}(?:\s*(?:,|\band\b|&|और|व)\s*{_ITEM})*)",
     re.IGNORECASE,
 )
@@ -43,7 +48,7 @@ MAX_NAMED_PAGES = 8
 
 
 def _to_int(text: str) -> int:
-    return int(text.replace(",", "").translate(str.maketrans("०१२३४५६७८९", "0123456789")))
+    return int(to_ascii_digits(text.replace(",", "")))
 
 
 def page_refs(question: str) -> list[int]:

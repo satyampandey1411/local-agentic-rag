@@ -30,7 +30,11 @@ TokenCounter = Callable[[str], int]
 # INLINE_SECTION_RE for a single unit: sentence splitting can cut right after "§ 164.", leaving
 # the unit ending in the number, so the capital letter that follows may be in the next unit.
 _UNIT_SECTION_RE = re.compile(r"(?:^|\s)§\s*(\d+[A-Za-z]?)\.(?=\s+[A-Z]|$)")
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+(?=[A-Z0-9\"'(\[•\-])")
+# English-style stops need a capital (or digit/quote) next, so "e.g. foo" stays whole. The
+# danda (।, ॥), Urdu full stop (۔), Arabic question mark (؟) and CJK stops always end a sentence.
+_SENTENCE_SPLIT = re.compile(
+    r"(?<=[.!?;:])\s+(?=[A-Z0-9\"'(\[•\-])|(?<=[।॥۔؟])\s*(?=\S)|(?<=[。！？])(?=\S)"
+)
 # "Table 7.", "Table A.3:", "Appendix Table B." — the label that names a table.
 _TABLE_LABEL_RE = re.compile(r"\b(?:Appendix\s+)?Table\s+[A-Z]?(?:\d+(?:\.\d+)*)?(?=[.:]\s)")
 
@@ -240,9 +244,15 @@ def _split_units(text: str, max_tokens: int, count_tokens: TokenCounter) -> list
         if count_tokens(sentence) <= max_tokens:
             units.append(sentence)
             continue
-        words = sentence.split()
         window: list[str] = []
-        for word in words:
+        for word in sentence.split():
+            pieces = _char_windows(word, max_tokens, count_tokens)
+            if len(pieces) > 1:  # one space-less run longer than a chunk: emit its pieces as is
+                if window:
+                    units.append(" ".join(window))
+                    window = []
+                units.extend(pieces)
+                continue
             window.append(word)
             if count_tokens(" ".join(window)) >= max_tokens:
                 units.append(" ".join(window))
@@ -250,6 +260,15 @@ def _split_units(text: str, max_tokens: int, count_tokens: TokenCounter) -> list
         if window:
             units.append(" ".join(window))
     return units
+
+
+def _char_windows(word: str, max_tokens: int, count_tokens: TokenCounter) -> list[str]:
+    """A "word" longer than a chunk (Chinese, Japanese or Thai text has no spaces) → pieces."""
+    n = count_tokens(word)
+    if n <= max_tokens:
+        return [word]
+    step = max(1, int(len(word) * max_tokens / n * 0.9))
+    return [word[i : i + step] for i in range(0, len(word), step)]
 
 
 def _overlap_tail(text: str, overlap_tokens: int, count_tokens: TokenCounter) -> str:

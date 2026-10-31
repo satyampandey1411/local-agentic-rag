@@ -21,7 +21,7 @@ from typing import Any, Literal
 RetrievalMode = Literal["dense", "bm25", "hybrid"]
 
 #: Bump whenever parsing/chunking code changes output, so cached indexes are rebuilt.
-INGEST_VERSION = "2026.10.26-11"  # ... + overlap-seeded chunks take the section number of their new text
+INGEST_VERSION = "2026.10.31-12"  # ... + any-script keyword tokens, danda/CJK sentence ends
 
 #: Environment flag: run PyMuPDF's table-layout ONNX model on the GPU in the parse workers
 #: (needs ``onnxruntime-gpu`` and CUDA; falls back to the CPU silently).  Off by default

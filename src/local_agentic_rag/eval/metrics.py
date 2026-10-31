@@ -38,6 +38,8 @@ from typing import Any
 
 import numpy as np
 
+from local_agentic_rag.lang import DIGITS_TO_ASCII
+
 DEFAULT_KS: tuple[int, ...] = (1, 3, 5, 10)
 
 # ---------------------------------------------------------------------------
@@ -49,10 +51,9 @@ _SINGLE_QUOTES = "‘’‚‛′`´"
 _DOUBLE_QUOTES = "“”„‟″«»"
 
 _TRANSLATION = {
-    # Indic digits (Devanagari ०-९, Bengali, Gujarati, ...) compare equal to ASCII digits.
-    **{0x0966 + i: str(i) for i in range(10)},
-    **{0x09E6 + i: str(i) for i in range(10)},
-    **{0x0AE6 + i: str(i) for i in range(10)},
+    # Other scripts' digits (Devanagari ०-९, Bengali, Urdu ۰-۹, Arabic ٠-٩, Tamil, Telugu,
+    # Thai, ...) compare equal to ASCII digits.
+    **DIGITS_TO_ASCII,
     **{ord(c): "-" for c in _DASH_CHARS},
     **{ord(c): "'" for c in _SINGLE_QUOTES},
     **{ord(c): '"' for c in _DOUBLE_QUOTES},
