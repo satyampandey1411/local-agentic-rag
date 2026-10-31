@@ -48,7 +48,7 @@ class RAGConfig:
     strip_headers_footers: bool = True
     extract_tables: bool = True
     ocr: Literal["auto", "off"] = "auto"  # OCR image-only pages if tesseract exists
-    ocr_language: str = "eng+hin+mar"  # tesseract languages; falls back to "eng" if missing
+    ocr_language: str = "auto"  # tesseract packs; "auto" picks them per page from the script
 
     # --- Retrieval -----------------------------------------------------
     # Multilingual by default: BGE-M3 (100+ languages, cross-lingual) + its reranker.

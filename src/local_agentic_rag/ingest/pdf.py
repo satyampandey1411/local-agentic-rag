@@ -18,6 +18,7 @@ Pipeline per page:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import html
 import logging
@@ -83,7 +84,9 @@ def open_pdf(pdf_path: str | Path):
     except Exception as exc:  # pymupdf.FileDataError and friends
         # The library's message names the stored file's full path; keep it out of the UI.
         logger.warning("pymupdf could not open %s: %s", path, exc)
-        raise PDFParseError(f"Could not open {path.name!r} as a PDF; the file may be damaged.") from exc
+        raise PDFParseError(
+            f"Could not open {path.name!r} as a PDF; the file may be damaged."
+        ) from exc
     try:
         if not doc.is_pdf:
             raise PDFParseError(f"{path.name!r} is not a PDF file.")
@@ -531,8 +534,14 @@ def _extract_page(
     image_only = len(plain) < MIN_TEXT_CHARS and bool(page.get_images(full=False))
     # A text layer that is mostly garbage (unmapped glyphs from legacy or subset fonts)
     # is read like a scan: OCR of the rendered page recovers what the eye sees.
-    garbled = not image_only and garbled_fraction(plain) > GARBLED_FRACTION
+    garbled = not image_only and (
+        garbled_fraction(plain) > GARBLED_FRACTION or uses_legacy_indic_font(page, plain)
+    )
     if (image_only or garbled) and ocr_available:
+        # Detect the page's script once, so the fallback below uses the same packs (run 9:
+        # when the CLI timed out, the fallback read Urdu and Telugu pages as Hindi).
+        if lang == "auto":
+            lang = _page_ocr_language(page)
         # Preferred: Tesseract CLI on a 300-dpi render.  Measured on a scanned Hindi page:
         # 99% word recall vs 70% for PyMuPDF's OCR text layer, which splits Devanagari
         # words at vowel signs and merges neighbours.
@@ -669,6 +678,99 @@ def _tessdata() -> str | None:
 
 OCR_DPI = 300
 
+#: Used for Latin and Devanagari pages, and whenever the script cannot be detected: the
+#: setting every scanned-page result in docs/RESULTS.md was measured with.
+DEFAULT_OCR_LANGUAGE = "eng+hin+mar"
+
+#: Script reported by Tesseract's orientation-and-script detection (OSD) → packs to try,
+#: best first.  A pack that is not installed is skipped; the script-level model
+#: ("script/Bengali" etc.) is the fallback when no language pack for it is installed.
+OCR_SCRIPT_LANGUAGES = {
+    "Arabic": ["urd", "ara", "fas"],
+    "Bengali": ["ben", "asm"],
+    "Gurmukhi": ["pan"],
+    "Gujarati": ["guj"],
+    "Oriya": ["ori"],
+    "Tamil": ["tam"],
+    "Telugu": ["tel"],
+    "Kannada": ["kan"],
+    "Malayalam": ["mal"],
+    "Sinhala": ["sin"],
+    "Han": ["chi_sim", "chi_tra"],
+    "Japanese": ["jpn"],
+    "Hangul": ["kor"],
+    "Cyrillic": ["rus", "ukr"],
+    "Greek": ["ell"],
+    "Hebrew": ["heb"],
+    "Thai": ["tha"],
+    "Myanmar": ["mya"],
+    "Khmer": ["khm"],
+    "Lao": ["lao"],
+    "Georgian": ["kat"],
+    "Armenian": ["hye"],
+    "Ethiopic": ["amh"],
+    "Tibetan": ["bod"],
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _installed_ocr_languages() -> frozenset[str]:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=30
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return frozenset()
+    return frozenset(line.strip() for line in out.splitlines()[1:] if line.strip())
+
+
+def _auto_ocr_language(image: str) -> str:
+    """Pick Tesseract packs for one page image from its detected script."""
+    import subprocess
+
+    installed = _installed_ocr_languages()
+    if "osd" not in installed:
+        return DEFAULT_OCR_LANGUAGE
+    try:
+        out = subprocess.run(
+            ["tesseract", image, "stdout", "--psm", "0", "-l", "osd"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return DEFAULT_OCR_LANGUAGE
+    m = re.search(r"^Script:\s*(\w+)", out, re.MULTILINE)
+    return ocr_language_for_script(m.group(1) if m else "", installed)
+
+
+#: Script detection needs far less detail than reading the text.
+OSD_DPI = 150
+
+
+def _page_ocr_language(page) -> str:
+    """Tesseract packs for one page, from its detected script (a low-resolution render)."""
+    import tempfile
+
+    if "osd" not in _installed_ocr_languages():
+        return DEFAULT_OCR_LANGUAGE
+    with tempfile.TemporaryDirectory() as tmp:
+        image = os.path.join(tmp, "osd.png")
+        page.get_pixmap(dpi=OSD_DPI).save(image)
+        return _auto_ocr_language(image)
+
+
+def ocr_language_for_script(script: str, installed: frozenset[str]) -> str:
+    """OSD script name → installed packs, e.g. Telugu → "tel+eng" (English kept for mixed pages)."""
+    packs = [p for p in OCR_SCRIPT_LANGUAGES.get(script, []) if p in installed]
+    if not packs and f"script/{script}" in installed:
+        packs = [f"script/{script}"]
+    if not packs:
+        return DEFAULT_OCR_LANGUAGE
+    return "+".join([*packs, "eng"] if "eng" in installed else packs)
+
 
 def _ocr_cli_paragraphs(page, page_no: int, lang: str) -> list[str]:
     """OCR a page with the ``tesseract`` CLI; returns paragraphs ([] if unavailable/failed).
@@ -683,6 +785,8 @@ def _ocr_cli_paragraphs(page, page_no: int, lang: str) -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         image = os.path.join(tmp, f"page{page_no}.png")
         page.get_pixmap(dpi=OCR_DPI).save(image)
+        if lang == "auto":
+            lang = _auto_ocr_language(image)
         for language in dict.fromkeys([lang, "eng"]):
             try:
                 result = subprocess.run(
@@ -714,6 +818,8 @@ def _ocr_text_to_paragraphs(text: str) -> list[str]:
 
 def _ocr_textpage(page, page_no: int, lang: str):
     """OCR one page; if a requested language pack is missing, retry with English only."""
+    if lang == "auto":
+        lang = DEFAULT_OCR_LANGUAGE
     tessdata = _tessdata()
     for language in dict.fromkeys([lang, "eng"]):
         try:
@@ -725,6 +831,25 @@ def _ocr_textpage(page, page_no: int, lang: str):
 
 #: Share of unreadable characters above which a page's text layer is replaced by OCR.
 GARBLED_FRACTION = 0.3
+
+#: Pre-Unicode Hindi typing fonts: they draw Devanagari but store ASCII codes, so the text
+#: layer reads like "Hkkjr ljdkj" (Kruti Dev for "भारत सरकार").  Such pages are OCR'd.
+_LEGACY_INDIC_FONT_RE = re.compile(r"kruti|devlys|chanakya|shusha", re.IGNORECASE)
+
+
+def uses_legacy_indic_font(page, plain: str) -> bool:
+    """True when most of the page's text is drawn with a known legacy Devanagari font."""
+    if not plain or not any(_LEGACY_INDIC_FONT_RE.search(f[3] or "") for f in page.get_fonts()):
+        return False
+    legacy = total = 0
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                n = len(span.get("text", "").strip())
+                total += n
+                if _LEGACY_INDIC_FONT_RE.search(span.get("font", "")):
+                    legacy += n
+    return total > 0 and legacy >= 0.5 * total
 
 
 def garbled_fraction(text: str) -> float:

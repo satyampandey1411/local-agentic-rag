@@ -31,8 +31,8 @@ Ollama registry).
 * **Docker path:** Docker with Compose v2, and the
   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   so containers can use the GPU.
-* **pip path:** Python 3.10+ (the Docker image uses 3.12), `tesseract-ocr` with the `hin` and
-  `mar` language packs for scanned pages (without it, scanned pages are skipped with a
+* **pip path:** Python 3.10+ (the Docker image uses 3.12), `tesseract-ocr` with the `osd`
+  pack and the language packs you need for scanned pages (the app detects each page's script) (without it, scanned pages are skipped with a
   warning), and [Ollama](https://ollama.com).
 
 ## Docker Compose
@@ -95,7 +95,7 @@ entrypoint. Only `qwen2.5:7b-instruct` is benchmarked.
 
 ```bash
 # 1. system packages (Debian/Ubuntu); skip OCR packages if you will not read scanned PDFs
-sudo apt-get install -y tesseract-ocr tesseract-ocr-hin tesseract-ocr-mar
+sudo apt-get install -y tesseract-ocr tesseract-ocr-osd tesseract-ocr-hin tesseract-ocr-mar tesseract-ocr-san tesseract-ocr-nep tesseract-ocr-urd tesseract-ocr-ara tesseract-ocr-ben tesseract-ocr-asm tesseract-ocr-tel tesseract-ocr-tam tesseract-ocr-kan tesseract-ocr-mal tesseract-ocr-guj tesseract-ocr-pan tesseract-ocr-ori
 
 # 2. the language-model server
 curl -fsSL https://ollama.com/install.sh | sh

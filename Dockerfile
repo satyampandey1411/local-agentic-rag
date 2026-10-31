@@ -18,10 +18,14 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/data/hf \
     LOCAL_RAG_CACHE=/data/cache
 
-# Tesseract with English, Hindi and Marathi data for scanned pages.
+# Tesseract for scanned pages: script detection (osd) plus Indian-language packs. The app
+# detects each page's script and picks the matching pack (see ingest/pdf.py).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        tesseract-ocr tesseract-ocr-hin tesseract-ocr-mar \
+        tesseract-ocr tesseract-ocr-osd tesseract-ocr-hin tesseract-ocr-mar tesseract-ocr-san \
+        tesseract-ocr-nep tesseract-ocr-urd tesseract-ocr-ara tesseract-ocr-ben tesseract-ocr-asm \
+        tesseract-ocr-tel tesseract-ocr-tam tesseract-ocr-kan tesseract-ocr-mal tesseract-ocr-guj \
+        tesseract-ocr-pan tesseract-ocr-ori \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

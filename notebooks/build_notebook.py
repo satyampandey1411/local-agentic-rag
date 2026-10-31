@@ -37,9 +37,11 @@ This notebook runs a **fully local** retrieval-augmented generation (RAG) system
 Colab **T4 GPU**. No API keys, and no document text leaves the runtime.
 You upload a PDF and ask questions. Each answer cites the pages it came from, and the
 agent checks its own answer against the source text before showing it.
-**Multilingual:** documents and questions can be in different languages (English, Hindi,
-Hinglish, Marathi, and the other languages BGE-M3 covers); answers come back in the
-question's language, and scanned pages are OCR'd (English, Hindi, Marathi packs installed).
+**Many languages:** documents and questions can be in different languages (Hindi, Marathi,
+Sanskrit, Nepali, Bhojpuri, Urdu, Bengali, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi,
+Odia, English, French, Chinese, Japanese, Russian, Hinglish, ...); answers come back in the
+question's language or in the one you ask for, and scanned pages are OCR'd after detecting
+each page's script (the Indian-language Tesseract packs are installed below).
 
 **How a question is answered**
 
@@ -136,8 +138,8 @@ else:
 print("Code at", REPO_DIR)
 """),
     code(r"""
-# Tesseract OCR with Hindi + Marathi language packs (for scanned / image-only PDFs).
-!apt-get -qq install -y tesseract-ocr tesseract-ocr-hin tesseract-ocr-mar > /dev/null 2>&1 && tesseract --list-langs | tail -n +2 | tr '\n' ' '
+# Tesseract OCR for scanned / image-only PDFs: script detection + Indian-language packs.
+!apt-get -qq install -y tesseract-ocr tesseract-ocr-osd tesseract-ocr-hin tesseract-ocr-mar tesseract-ocr-san tesseract-ocr-nep tesseract-ocr-urd tesseract-ocr-ara tesseract-ocr-ben tesseract-ocr-asm tesseract-ocr-tel tesseract-ocr-tam tesseract-ocr-kan tesseract-ocr-mal tesseract-ocr-guj tesseract-ocr-pan tesseract-ocr-ori > /dev/null 2>&1 && tesseract --list-langs | tail -n +2 | tr '\n' ' '
 !pip install -q -e "{REPO_DIR}[colab,web]"
 import importlib
 import sys
@@ -415,13 +417,14 @@ if DOWNLOAD_RESULTS:
 """),
     # ------------------------------------------------------------------ 9. multilingual
     md(r"""
-## 9. Other languages: Hindi, Hinglish, Marathi, and scanned pages
+## 9. Other languages and scanned pages (Hindi, Hinglish, Marathi examples)
 
 The embedder (BGE-M3) and reranker (bge-reranker-v2-m3) are multilingual, so a question can be
 in a different language from the document. When the scripts differ (or the question is Hinglish),
 the agent adds one translated search query in the document's language, and the answer is written
-in **the question's language**. Image-only (scanned) pages go through Tesseract OCR with Hindi and
-Marathi packs. The multilingual test documents are Wikipedia articles (CC BY-SA), regenerated from
+in **the question's language** (or the one the question asks for). Image-only (scanned) pages go
+through Tesseract OCR: the page's script is detected first and the matching pack is used. The cells
+below use the small Hindi/Marathi set; `benchmark/languages/` has 22 languages. The multilingual test documents are Wikipedia articles (CC BY-SA), regenerated from
 saved text by `benchmark/multilingual/make_pdfs.py`.
 """),
     code(r"""
