@@ -1,0 +1,74 @@
+[
+ {
+  "doc_id": "bh-patna",
+  "lang": "bh",
+  "wiki": "bh.wikipedia.org",
+  "article_title": "पटना",
+  "topic_en": "Patna",
+  "page_id": 1545,
+  "rev_id": 801597,
+  "rev_timestamp": "2026-07-21T11:13:06Z",
+  "source_text": "sources/bh-patna.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "fr-viaducdemillau",
+  "lang": "fr",
+  "wiki": "fr.wikipedia.org",
+  "article_title": "Viaduc de Millau",
+  "topic_en": "Millau Viaduct",
+  "page_id": 2764705,
+  "rev_id": 239180060,
+  "rev_timestamp": "2026-09-03T01:46:31Z",
+  "source_text": "sources/fr-viaducdemillau.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "sa-kalidasa",
+  "lang": "sa",
+  "wiki": "sa.wikipedia.org",
+  "article_title": "कालिदासः",
+  "topic_en": "Kalidasa",
+  "page_id": 8377,
+  "rev_id": 489237,
+  "rev_timestamp": "2024-10-04T16:28:11Z",
+  "source_text": "sources/sa-kalidasa.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "ta-kallanai",
+  "lang": "ta",
+  "wiki": "ta.wikipedia.org",
+  "article_title": "கல்லணை",
+  "topic_en": "Kallanai",
+  "page_id": 7993,
+  "rev_id": 4366776,
+  "rev_timestamp": "2025-10-16T17:15:42Z",
+  "source_text": "sources/ta-kallanai.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "te-golconda",
+  "lang": "te",
+  "wiki": "te.wikipedia.org",
+  "article_title": "గోల్కొండ",
+  "topic_en": "Golconda",
+  "page_id": 1431,
+  "rev_id": 4923812,
+  "rev_timestamp": "2026-08-06T18:51:32Z",
+  "source_text": "sources/te-golconda.txt",
+  "scanned_copy": false
+ },
+ {
+  "doc_id": "ur-minarepakistan",
+  "lang": "ur",
+  "wiki": "ur.wikipedia.org",
+  "article_title": "مینار پاکستان",
+  "topic_en": "Minar-e-Pakistan",
+  "page_id": 18157,
+  "rev_id": 9370475,
+  "rev_timestamp": "2026-01-30T23:29:49Z",
+  "source_text": "sources/ur-minarepakistan.txt",
+  "scanned_copy": false
+ }
+]
