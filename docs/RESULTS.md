@@ -1,12 +1,12 @@
 # Results
 
 Every number on this page was measured with the code in this repository on NVIDIA Tesla T4 GPUs
-(free Google Colab and Kaggle), 25–29 Oct 2026. Nothing is extrapolated. [Section 11](#11-reproduce)
+(free Google Colab and Kaggle), 25–31 Oct 2026. Nothing is extrapolated. [Section 11](#11-reproduce)
 gives the commands.
 
 Two kinds of question sets are used, and they are kept apart throughout:
 
-* **Development sets** (61 English questions, 20 multilingual questions). Failures on these sets were
+* **Development sets** (61 English questions, 20 Hindi/Marathi questions, 122 questions in 22 languages). Failures on these sets were
   read and fixed, so scores on them show progress, not how the system does on new documents.
 * **Unseen documents**: held-out set 2 (US Code Title 21, a Hindi audit report, the GAO Cost Guide),
   each used exactly once, and a synthetic scale corpus written by a separate author. These are the
@@ -20,6 +20,9 @@ Two kinds of question sets are used, and they are kept apart throughout:
 | Unanswerable questions refused | **9/9** | English development set |
 | The same questions with no documents | **1/52** correct: answers come from retrieval, not the model's memory | English development set |
 | Multilingual (Hindi, Marathi, Hinglish, English about Indic documents) | **17/18** answerable correct, 2/2 refused | multilingual development set |
+| Many languages: 22 document languages, 24 question languages | **81/111** answerable correct (75/111 before the update), **112/122** answered in the right script (96/122 before) | many-languages development set, run 9 |
+| Unseen documents in Sanskrit, Bhojpuri, Urdu, Telugu, Tamil, French | **18/20** correct, 19/20 in the right script | many-languages held-out set, single use |
+| After the multi-language update | English 45/52, Hindi/Marathi 17/18: no drop | regression check, run 10 |
 | Documents never used for tuning | **15/18** GAO Cost Guide · **19/25** US Code Title 21 · **9/14** CAG Hindi report | held-out set 2, single use |
 | Long real documents (585–4,211 pages) | 30/37 answerable, 6/9 refused | used twice, not held out |
 | Right page in the top 5 | 73.1% (starting code) → **94.2%** (default) | English development set |
@@ -45,6 +48,8 @@ presuppose something the document does not contain (6/9 refused).
 | Runs 5 and 6 | 27 Oct | Kaggle T4 | numerical-question fixes |
 | Run 7 | 29 Oct | Kaggle T4 | no-document control, held-out GAO (single use), number fixes on unseen tiers |
 | Run 8 | 29 Oct | Kaggle T4 | answer-model comparison |
+| Run 9 | 31 Oct | Kaggle T4 x2 | many languages, before (GPU 0) vs after (GPU 1) the update; held-out many-languages set (single use) |
+| Run 10 | 31 Oct | Kaggle T4 | English and Hindi/Marathi development sets on the updated code (regression check) |
 
 Kaggle runs used one Tesla T4 (15,360 MiB) per process, as on free Colab. Numbers were read from each
 run's logs and result files.
@@ -424,6 +429,172 @@ What this supports: cross-language retrieval works (recall@5 0.94 including OCR 
 come back in the question's language (Hindi → Hindi, Hinglish → Hinglish, Marathi → Marathi; see
 `docs/img/multilingual_answers_colab_t4.png`). Weak spots: English questions about Indic documents
 (2/4), and OCR'd pages. The set is tiny (20 questions), so each question is 5 points.
+
+## 8b. Many languages (run 9, 31 Oct)
+
+**Why.** The earlier multilingual set covered three languages (Hindi, Marathi, Hinglish). This run
+asks the questions people actually ask: a PDF in Sanskrit, Bhojpuri, Urdu or Telugu; a question in a
+different language from the book (Telugu about a Sanskrit book, English about a Hindi book); "answer
+in Urdu"; ten books uploaded and no book selected; one answer that needs two books; scanned copies.
+
+**Set.** `benchmark/languages/`: 22 short Wikipedia articles, one per language (Hindi, Marathi,
+Sanskrit, Nepali, Bhojpuri, Awadhi, Maithili, Urdu, Bengali, Telugu, Tamil, Kannada, Malayalam,
+Gujarati, Punjabi, Odia, English, French, Arabic, Chinese, Japanese, Russian), 14 image-only copies,
+and 122 questions in 24 question languages (including Hinglish and Roman Urdu). Every fact was
+checked on its evidence page in the real PDF text. Arabic is in the library only as a distractor:
+its PDF text layer did not round-trip (Arabic mixed with digits comes out of the PDF out of order),
+so it has no questions. A separate held-out set (6 new documents in Sanskrit, Bhojpuri, Urdu, Telugu,
+Tamil, French; 20 questions) was written and sealed (SHA-256 in `heldout/SEALED.txt`) before any
+result was seen, and run once.
+
+**How it was run.** One Kaggle T4 x2 session: GPU 0 ran the committed code (48f6de9, "before"),
+GPU 1 the multi-language update ("after"), same answer model (Qwen2.5-7B), same scoring script
+(`benchmark/languages/run.py`). Then GPU 1 ran the held-out set once.
+
+**Scoring.** Answerable: every required fact appears in the answer (aliases cover each fact's
+spelling in the document's script, the answer language's script and Latin; every script's digits
+count as digits). Unanswerable: the system refused. "Right script": the answer is written in the
+script of the expected answer language (this cannot tell Hindi from Sanskrit; both are Devanagari).
+"Right book": a library or two-book answer cites every evidence document.
+
+**Overall, development set (122 questions)**
+
+| | Before (committed code) | After (multi-language fixes) |
+|---|---:|---:|
+| Answerable questions answered correctly | 75/111 | **81/111** |
+| Unanswerable questions refused | 9/11 | **9/11** |
+| Answerable questions wrongly refused | 12/111 | **8/111** |
+| Answer written in the expected script | 96/122 | **112/122** |
+| Library / two-book questions citing the right book(s) | 25/27 | **23/27** |
+| Median seconds per question | 10.6 | **12.1** |
+
+**By kind of question** (correct · answer written in the right script)
+
+| Kind of question | Before: correct · right script | After: correct · right script |
+|---|---:|---:|
+| Question in the document's language | 21/21 · 20/21 | **21/21** · 21/21 |
+| English question about a non-English document | 16/20 · 20/20 | **16/20** · 20/20 |
+| Question in another non-English language (Telugu on Sanskrit, Urdu on Hindi, ...) | 10/21 · 15/21 | **10/21** · 17/21 |
+| Asks for the answer in another language ("Answer in Urdu") | 5/8 · 2/8 | **7/8** · 8/8 |
+| Searches all 22 books at once: must find the right one | 19/21 · 20/21 | **20/21** · 21/21 |
+| Needs one fact from each of two books in different languages | 2/6 · 6/6 | **1/6** · 6/6 |
+| Image-only copy: needs OCR | 2/14 · 6/14 | **6/14** · 11/14 |
+| Not in the document: should be refused | 9/11 · 7/11 | **9/11** · 8/11 |
+
+**By document language** (each row counts every question about that document, including library, two-book, scanned and unanswerable ones)
+
+| Document language | Before | After | After, right script |
+|---|---:|---:|---:|
+| Hindi | 5/8 | **5/8** | 8/8 |
+| Telugu | 6/8 | **6/8** | 8/8 |
+| Bengali | 5/7 | **5/7** | 5/7 |
+| Tamil | 5/7 | **6/7** | 7/7 |
+| Chinese | 4/6 | **4/6** | 4/6 |
+| English | 4/6 | **5/6** | 6/6 |
+| Japanese | 4/6 | **3/6** | 6/6 |
+| Kannada | 4/6 | **4/6** | 6/6 |
+| Malayalam | 4/6 | **4/6** | 6/6 |
+| Punjabi | 4/6 | **4/6** | 5/6 |
+| Russian | 5/6 | **6/6** | 6/6 |
+| Sanskrit | 4/6 | **5/6** | 6/6 |
+| Urdu | 3/6 | **4/6** | 6/6 |
+| Awadhi | 2/5 | **3/5** | 5/5 |
+| Bhojpuri | 4/5 | **4/5** | 5/5 |
+| Gujarati | 3/5 | **4/5** | 4/5 |
+| Maithili | 4/5 | **4/5** | 4/5 |
+| Marathi | 4/5 | **4/5** | 4/5 |
+| Odia | 3/5 | **3/5** | 3/5 |
+| French | 4/4 | **4/4** | 4/4 |
+| Nepali | 3/4 | **3/4** | 4/4 |
+
+**By question language**
+
+| Question language | Before | After | After, right script |
+|---|---:|---:|---:|
+| English | 26/31 | **24/31** | 31/31 |
+| Hindi | 8/12 | **9/12** | 12/12 |
+| Bengali | 4/7 | **4/7** | 4/7 |
+| Telugu | 3/7 | **4/7** | 7/7 |
+| Chinese | 4/5 | **4/5** | 3/5 |
+| Russian | 4/5 | **5/5** | 5/5 |
+| Tamil | 2/5 | **3/5** | 5/5 |
+| Urdu | 2/5 | **3/5** | 4/5 |
+| French | 3/4 | **4/4** | 4/4 |
+| Gujarati | 2/4 | **3/4** | 3/4 |
+| Japanese | 3/4 | **3/4** | 4/4 |
+| Kannada | 2/4 | **2/4** | 4/4 |
+| Marathi | 3/4 | **3/4** | 4/4 |
+| Malayalam | 2/3 | **2/3** | 3/3 |
+| Nepali | 2/3 | **2/3** | 3/3 |
+| Odia | 2/3 | **2/3** | 2/3 |
+| Punjabi | 2/3 | **2/3** | 3/3 |
+| Sanskrit | 2/3 | **3/3** | 3/3 |
+| Awadhi | 2/2 | **2/2** | 2/2 |
+| Bhojpuri | 2/2 | **2/2** | 2/2 |
+| Hinglish | 1/2 | **1/2** | 1/2 |
+| Maithili | 2/2 | **2/2** | 2/2 |
+| Arabic | 1/1 | **1/1** | 1/1 |
+| Roman Urdu | 0/1 | **0/1** | 0/1 |
+
+**Held-out set** (6 documents, 20 questions, sealed before any result was seen, run once on the updated code)
+
+| | Before (committed code) | After (multi-language fixes) |
+|---|---:|---:|
+| Answerable questions answered correctly | – | **18/20** |
+| Unanswerable questions refused | – | **–** |
+| Answerable questions wrongly refused | 0/0 | **0/20** |
+| Answer written in the expected script | – | **19/20** |
+| Library / two-book questions citing the right book(s) | – | **1/2** |
+| Median seconds per question | – | **11.7** |
+
+| Document language | Before | After | After, right script |
+|---|---:|---:|---:|
+| Tamil | – | **3/4** | 4/4 |
+| Urdu | – | **3/4** | 4/4 |
+| Bhojpuri | – | **3/3** | 3/3 |
+| French | – | **3/3** | 3/3 |
+| Sanskrit | – | **3/3** | 3/3 |
+| Telugu | – | **3/3** | 2/3 |
+
+**Reading the table.** The update did not change how often a same-language or English question is
+answered right; those were already good. What changed is mainly *the language of the answer*
+(96 → 112 of 122 in the right script) and requests for another language (5/8 → 7/8 correct, 2/8 → 8/8
+in the asked language), plus scanned copies (2/14 → 6/14) and fewer wrong refusals (12 → 8 of 111).
+Two two-book questions that the old code answered were missed by the new one: both times the model
+misread one of the two facts (it said a year was not given, and it gave a wrong height). Questions in a
+different non-English language than the book stayed at 10/21: this is the 7B model's limit in
+low-resource languages, not retrieval (the right book was cited for every library question).
+The fact-based scoring is lenient in one known case: a Telugu question answered in Hindi kept the right
+number but translated "feet" as "fingers".
+
+**Scanned copies on Kaggle.** Tesseract's script detection chose the right packs (Urdu/Arabic,
+Bengali/Assamese, Telugu, Malayalam, Japanese, Chinese, Russian, ...), but with both GPUs' jobs sharing
+Kaggle's CPUs, OCR of the first page ran past the 180-second limit for 8 of the 14 copies (13 for the old
+code) and the fallback OCR then used the default English/Hindi/Marathi packs. The fallback now reuses the
+detected script (`ingest/pdf.py`, test `test_ocr_fallback_uses_the_detected_script`); that fix came after
+this run and is not measured yet. On the shared CPU one scanned copy took 28 s to 5.8 min to read with the
+updated code (59 s to 6.6 min with the old code).
+
+
+**What changed in the code** (each with unit tests in `tests/test_languages.py`):
+answer language named from the question (script, then small word lists inside shared scripts),
+explicit "answer in X" requests, "not found" in about 30 languages, keyword tokens for every script
+(danda, Arabic presentation forms, no-space scripts as character bigrams), sentence ends in other
+scripts, one translated search query per document script in a mixed library, OCR language picked per
+page from Tesseract's script detection, legacy Hindi fonts sent to OCR, "page 5" in 17 languages,
+every script's digits, and the book's name on citations when several books are searched.
+
+**Caveats.** One run, one annotator, a few questions per language: a language with 4 questions
+moves 25 points per question. The questions in Sanskrit, Awadhi, Maithili, Bhojpuri, Odia,
+Malayalam, Arabic, Japanese and Russian were written by a non-native speaker and kept short. The
+English dev, Hindi/Marathi dev and held-out results earlier on this page were measured before this
+update; the held-out sets were not re-run (each is used once).
+
+**Regression check (run 10, 31 Oct, Kaggle T4, the final code).** The two development sets re-run on
+the updated code: English **45/52 (86.5%)**, 9/9 unanswerable refused, no false refusals, right page in
+the top 5 for 96.2%, median 6.1 s (before the update, run 8: 44/52, 9/9); Hindi/Marathi set **17/18**,
+2/2 refused, one false refusal (before: 17/18, 2/2). A one-question difference is within the
+run-to-run noise measured earlier, so the update did not cost English or Hindi/Marathi quality.
 
 ## 9. Real documents, held-out documents and the no-document control
 

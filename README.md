@@ -7,10 +7,10 @@ Every model runs locally on a single T4 GPU (free Google Colab or Kaggle). No ou
 |---|---|
 | **84.6%** of answerable English questions correct (44/52) | **9/9** questions with no answer in the document refused |
 | **15/18 · 19/25 · 9/14** on three held-out documents never used for tuning | **1/52** with the same model and no documents: answers come from retrieval |
-| **17/18** multilingual questions (Hindi, Marathi, Hinglish, cross-language) | **10,000 pages** processed in 37 min on a T4, with crash recovery |
+| **22 languages tested**: 81/111 correct, 112/122 answered in the right script; **18/20** on unseen Sanskrit, Bhojpuri, Urdu, Telugu, Tamil and French documents | **10,000 pages** processed in 37 min on a T4, with crash recovery |
 | **0.5 s** median to the first words of an answer | **8.9 of 15 GB** GPU memory with every model loaded |
 
-All numbers are measured on Tesla T4 GPUs between 25 and 29 Oct 2026; how and where is in
+All numbers are measured on Tesla T4 GPUs between 25 and 31 Oct 2026; how and where is in
 [docs/RESULTS.md](docs/RESULTS.md) and [docs/SCALE.md](docs/SCALE.md).
 
 ![How Local Agentic RAG answers a question about a long PDF](docs/img/workflow.png)
@@ -25,9 +25,13 @@ All numbers are measured on Tesla T4 GPUs between 25 and 29 Oct 2026; how and wh
   An always-on loop was measured to be worse, so the extra work runs only when needed.
 - **Reads real documents.** Two-column papers in reading order, ruled tables, whitespace-aligned statistical
   tables rebuilt cell by cell, running headers removed, scanned pages read with OCR.
-- **Works across languages.** Ask in English, Hindi, Marathi or Hinglish about a document in another
-  language. Search is cross-lingual, the question is translated when the scripts differ, and the answer
-  comes back in the question's language.
+- **Works in many languages.** Upload a PDF in any language whose text is stored as Unicode (Hindi,
+  Marathi, Sanskrit, Nepali, Bhojpuri, Awadhi, Maithili, Urdu, Bengali, Telugu, Tamil, Kannada, Malayalam,
+  Gujarati, Punjabi, Odia, English, French, Chinese, Japanese, Russian, ...) and ask in any language: a
+  Telugu question about a Sanskrit book works. Search is cross-lingual, the question is also translated
+  into each document's script, and the answer comes back in the question's language, or in the language
+  you ask for ("Answer in Urdu", "उर्दू में बताइए"). Scanned pages are read with OCR after detecting each
+  page's script. With several books selected, each citation names its book.
 - **Handles long PDFs.** Ingestion streams page batches through crash-isolated workers and saves a checkpoint
   after every batch. A 10,000-page PDF can be asked about after its first batch, and an interrupted job
   resumes where it stopped.
@@ -41,7 +45,7 @@ All numbers are measured on Tesla T4 GPUs between 25 and 29 Oct 2026; how and wh
 ```
  Once per PDF                                         Every question
  ─────────────                                        ──────────────
- PDF ─► read pages (PyMuPDF workers, OCR eng+hin+mar)  question ─► search two ways: BGE-M3 meaning (top 30)
+ PDF ─► read pages (PyMuPDF workers, OCR by script)    question ─► search two ways: BGE-M3 meaning (top 30)
      ─► passages ≤320 tokens, never across a page                  + BM25 keywords (top 30) ─► RRF ─► 24
      ─► BGE-M3 vectors + BM25 keyword index                     ─► bge-reranker-v2-m3 ─► best 6
      ─► on disk, checkpoint after every batch                   ─► Qwen2.5-7B writes, citing [n] ─► verify
@@ -55,7 +59,7 @@ All numbers are measured on Tesla T4 GPUs between 25 and 29 Oct 2026; how and wh
 | Meaning search | BAAI/bge-m3 (100+ languages) | GPU |
 | Reranking | BAAI/bge-reranker-v2-m3 | GPU |
 | Keyword search | BM25 with a Unicode-aware tokenizer | CPU |
-| Scanned pages | Tesseract OCR (English, Hindi, Marathi) | CPU |
+| Scanned pages | Tesseract OCR: script detected per page, then the matching language pack | CPU |
 | Table detection | PyMuPDF's layout model (optionally on the GPU) | CPU or GPU |
 
 The design, and the measurement behind each choice, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -78,6 +82,27 @@ cited page) and **multilingual set** (20 questions):
 | GAO Cost Estimating and Assessment Guide | 476 | 15 / 18 | 2 / 4 |
 | US Code Title 21 (Food and Drugs) | – | 19 / 25 | 4 / 5 |
 | CAG audit report on GST, in Hindi | 190 | 9 / 14 | 2 / 4 |
+
+**Many languages** (22 document languages, 24 question languages including Hinglish and Roman Urdu, 122
+questions; the same Kaggle T4 session ran the code before and after the multi-language update, 31 Oct):
+
+| Kind of question | Before | After |
+|---|---:|---:|
+| Question in the document's language | 21/21 | 21/21 |
+| English question about a non-English document | 16/20 | 16/20 |
+| Question in another non-English language (Telugu about a Sanskrit book, Urdu about a Hindi one, ...) | 10/21 | 10/21 |
+| Asks for the answer in another language ("Answer in Urdu"): correct · in the asked language | 5/8 · 2/8 | **7/8 · 8/8** |
+| All 22 books searched at once: correct · cited the right book | 19/21 · 21/21 | 20/21 · 21/21 |
+| Needs one fact from each of two books in different languages: correct · cited both books | 2/6 · 4/6 | 1/6 · 2/6 |
+| Scanned (image-only) copy | 2/14 | **6/14** |
+| Not in the document: refused | 9/11 | 9/11 |
+| **All answerable** · answers written in the right script (all 122) | 75/111 · 96/122 | **81/111 · 112/122** |
+
+Six further documents (Sanskrit, Bhojpuri, Urdu, Telugu, Tamil, French), written and sealed before any
+result was seen and run once: **18/20** correct, 19/20 in the right script. Re-running the earlier sets
+on the updated code: English 45/52, Hindi/Marathi 17/18, so nothing was lost. Weakest: questions in a
+different non-English language (10/21) and two-book questions (1/6). Details, caveats and per-language
+tables: [docs/RESULTS.md](docs/RESULTS.md#8b-many-languages-run-9-31-oct).
 
 **Is it answering from memory?** No. With the same 61 questions and no document passages, Qwen2.5-7B got
 1/52 right.
@@ -108,7 +133,9 @@ and uses the least memory. The prompts were developed with Qwen, which may favou
 At every size a parse worker was killed mid-page and a job was interrupted half-way; both recovered. The
 web app served 1 to 8 concurrent users with no failed request, at about 10.5 answers per minute on one T4.
 
-**Still weak** (also measured): questions that combine facts from several pages (5/9), questions that
+**Still weak** (also measured): questions that combine facts from several pages (5/9) or two books in
+different languages (1/6), questions asked in a different non-English language from the book (10/21),
+questions that
 assume something the document does not say (6/9 refused on real documents), and the numeric fixes were tuned
 on the English set and showed no gain on synthetic documents. Full list in [docs/STATUS.md](docs/STATUS.md).
 

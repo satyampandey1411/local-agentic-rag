@@ -172,16 +172,20 @@ lost everything. Ingestion is now a two-pass stream with checkpoints
 | Concern | What the code does | Where |
 |---|---|---|
 | Cross-language retrieval | **BGE-M3** embedder (100+ languages, one shared vector space) + **bge-reranker-v2-m3** cross-encoder | `config.py` defaults |
-| Keyword search in any script | Unicode tokenizer that keeps Indic vowel signs/combining marks inside words (a plain `\w+` splits "निर्माण" at every matra); CJK indexed per character; ASCII path keeps decimals/codes | `retrieval/bm25.py` |
-| Question ≠ document language, Hinglish | Script detection + Hinglish function-word check; if they differ, **one LLM call translates the question into the document's language** (given a text sample). Passages are ranked by the best of original and translation | `lang.py`, `agent._lead_queries`, `HybridRetriever(n_primary=2)` |
-| Answer language | Generator rule: answer in the question's language and script (Hinglish → Hinglish), keep names/numbers/[n] | `agent/prompts.py` |
-| Refusals | Localised refusal message (Devanagari questions get a Hindi + English message) | `lang.refusal_message` |
-| Scanned PDFs | **Tesseract CLI** on a 300-dpi render with `eng+hin+mar` (falls back to `eng` if a pack is missing, then to PyMuPDF's OCR layer). Measured on a scanned Hindi page: 99% word recall vs 70% for PyMuPDF's OCR text layer, which split Devanagari words at vowel signs. OCR text becomes plain paragraphs, so OCR noise can't masquerade as headings | `ingest/pdf.py` |
-| Grading | Indic digits (१६३२) normalised to ASCII | `eval/metrics.py` |
+| Keyword search in any script | Unicode tokenizer that keeps vowel signs, Arabic harakat and zero-width joiners inside words (a plain `\w+` splits "निर्माण" at every matra) and ends a word at the danda (।); Chinese, Japanese, Thai, Lao, Khmer and Burmese, written without spaces, are indexed as character bigrams (plus single ideographs); NFKC folds Arabic presentation forms; the ASCII path keeps decimals/codes | `retrieval/bm25.py` |
+| Passages in any script | Sentences also end at ।, ॥, ۔, ؟ and 。！？; a run of text with no spaces that is longer than a passage is cut by characters | `ingest/chunker.py` |
+| Question ≠ document language, Hinglish | Script detection + Hinglish function-word check; if they differ, **one LLM call translates the question into the document's language** (given a text sample). With several documents in different scripts, one translation per script (at most 3). Passages are ranked by the best of the original and the translations | `lang.py`, `agent._lead_queries`, `HybridRetriever(n_primary=...)` |
+| Answer language | The question's language is named for the generator: from the script where one script means one language (Telugu, Tamil, Gujarati, ...), from small function-word lists inside shared scripts (Hindi / Marathi / Nepali / Sanskrit / Bhojpuri / Awadhi / Maithili in Devanagari; Urdu / Arabic / Persian; English / French / Spanish / German / ... / Hinglish in Latin). If the words do not settle it, the model is told to answer in the question's own language and, for Devanagari, not to fall back to Hindi. An explicit request ("Answer in Urdu", "उर्दू में बताइए", "హిందీలో చెప్పండి") overrides it | `lang.choose_answer_language`, `agent/prompts.py` |
+| Refusals | "Not found" in the answer language (about 30 languages, each with the English sentence after it) | `lang.refusal_message` |
+| Scanned PDFs | **Tesseract CLI** on a 300-dpi render. With `ocr_language="auto"` (default) Tesseract's script detection (OSD) runs first and picks the installed packs for that script (Urdu/Arabic, Bengali/Assamese, Telugu, Tamil, ...); Latin, Devanagari and undetected pages use `eng+hin+mar`, the setting the scanned-Hindi results were measured with. Falls back to `eng`, then to PyMuPDF's OCR layer. Pages drawn with legacy Hindi fonts (Kruti Dev, DevLys, Chanakya, Shusha), whose text layer is ASCII look-alikes, are OCR'd too | `ingest/pdf.py` |
+| Page references | "page 5" in English, Hindi, Marathi, Urdu, Arabic, Bengali, Punjabi, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam, Spanish, German, Russian and Japanese, with any script's digits | `retrieval/hybrid.py` |
+| Grading and arithmetic | Every script's decimal digits (१६३२, ১৬৩২, ۱۶۳۲, ౧౬౩౨, ...) normalised to ASCII | `lang.DIGITS_TO_ASCII` |
 
-Limits (not claimed): Hindi vs Marathi are not distinguished by script detection (the LLM sees the
-question and is told to mirror its language); generation quality in Marathi and lower-resource
-languages is bounded by Qwen2.5-7B; OCR quality depends on scan quality and the installed Tesseract packs.
+Limits (not claimed): telling languages apart inside one script uses short word lists, so a very
+short question may get the generic "answer in the question's language" instruction; generation quality
+in lower-resource languages is bounded by Qwen2.5-7B; OCR quality depends on scan quality and on which
+Tesseract packs are installed; Urdu set in a Nastaliq font and Arabic mixed with digits can come out
+of a PDF's text layer garbled or out of order (seen while building the test PDFs).
 
 ## 3. Memory budget on Colab (T4 15 GB VRAM, 12.7 GB host RAM)
 
