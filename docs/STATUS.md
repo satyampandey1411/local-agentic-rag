@@ -47,7 +47,7 @@ names the run behind each claim.
 | Phone layout | checked at 390 and 360 px in an emulated phone browser (Chromium); no horizontal scroll; touch targets enlarged to 40–44 px |
 | Docker image and Compose stack | `docker build` passed (6.5 GB, Tesseract eng/hin/mar); `docker compose up` with `docker-compose.cpu.yml` and `scripts/smoke_install.sh` passed with the real 7B model on a CPU host ([DEPLOY.md](DEPLOY.md#tested)) |
 | Project notebook `notebooks/Local_Agentic_RAG.ipynb` | executed top to bottom on a Kaggle T4 in 32 min and 34.5 min with the GPU table-detection cell, no errors; earlier in a fresh free Colab T4 runtime |
-| Gradio chat UI and HTML answer card | launched inline in Colab on a T4; a live chat turn returned a checked, cited answer (`docs/img/chat_ui_colab_t4.png`); follow-up questions rewritten from chat history |
+| Gradio chat UI and HTML answer card | launched inline in Colab on a T4; a live chat turn returned a checked, cited answer; follow-up questions rewritten from chat history |
 | Evaluation harness: metrics, bootstrap confidence intervals, resumable runner, reports | 118 tests; the benchmark validator reports 0 errors |
 
 ### Tests, CI and reviews
