@@ -677,6 +677,10 @@ def _tessdata() -> str | None:
 
 
 OCR_DPI = 300
+#: Seconds for one Tesseract run at OCR_DPI before the faster retry (main pack, OCR_RETRY_DPI).
+OCR_TIMEOUT_S = float(os.environ.get("LOCAL_RAG_OCR_TIMEOUT", "100"))
+OCR_RETRY_DPI = 200
+OCR_RETRY_TIMEOUT_S = 60.0
 
 #: Used for Latin and Devanagari pages, and whenever the script cannot be detected: the
 #: setting every scanned-page result in docs/RESULTS.md was measured with.
@@ -793,9 +797,16 @@ def _ocr_cli_paragraphs(page, page_no: int, lang: str) -> list[str]:
                     ["tesseract", image, "stdout", "-l", language],
                     capture_output=True,
                     text=True,
-                    timeout=180,
+                    timeout=OCR_TIMEOUT_S,
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
+            except subprocess.TimeoutExpired:
+                # A busy CPU (run 9: two benchmarks sharing Kaggle's CPUs) made 300-dpi OCR
+                # with two packs overrun.  One pack at 200 dpi is several times faster.
+                logger.warning(
+                    "tesseract (%s) timed out on page %d; retrying faster", language, page_no
+                )
+                return _ocr_fast_retry(page, page_no, language, tmp)
+            except OSError as exc:
                 logger.warning("tesseract failed on page %d: %s", page_no, exc)
                 return []
             if result.returncode == 0 and result.stdout.strip():
@@ -803,6 +814,28 @@ def _ocr_cli_paragraphs(page, page_no: int, lang: str) -> list[str]:
             logger.warning(
                 "tesseract (%s) failed on page %d: %s", language, page_no, result.stderr[-200:]
             )
+    return []
+
+
+def _ocr_fast_retry(page, page_no: int, language: str, tmp: str) -> list[str]:
+    """Second OCR attempt after a timeout: the main pack only, at ``OCR_RETRY_DPI``."""
+    import subprocess
+
+    primary = language.split("+")[0]
+    image = os.path.join(tmp, f"page{page_no}-fast.png")
+    page.get_pixmap(dpi=OCR_RETRY_DPI).save(image)
+    try:
+        result = subprocess.run(
+            ["tesseract", image, "stdout", "-l", primary],
+            capture_output=True,
+            text=True,
+            timeout=OCR_RETRY_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("fast tesseract retry (%s) failed on page %d: %s", primary, page_no, exc)
+        return []
+    if result.returncode == 0 and result.stdout.strip():
+        return _ocr_text_to_paragraphs(result.stdout)
     return []
 
 

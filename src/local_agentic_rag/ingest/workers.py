@@ -30,8 +30,9 @@ from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
-#: Seconds one page may take (OCR at 300 dpi on a slow CPU is the worst case).
-PAGE_TIMEOUT_S = float(os.environ.get("LOCAL_RAG_PAGE_TIMEOUT", "180"))
+#: Seconds one page may take.  OCR is the worst case: script detection, a 300-dpi run
+#: (LOCAL_RAG_OCR_TIMEOUT, 100 s) and a faster retry (60 s) must fit inside it.
+PAGE_TIMEOUT_S = float(os.environ.get("LOCAL_RAG_PAGE_TIMEOUT", "300"))
 
 
 class WorkerFailed(RuntimeError):

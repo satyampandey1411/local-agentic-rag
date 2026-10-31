@@ -152,7 +152,8 @@ Environment variables:
 | `LOCAL_RAG_TOKEN` | unset (no authentication) | access token; the `--token` flag wins |
 | `LOCAL_RAG_UPLOAD_QUOTA_BYTES` | unset (no quota) | most bytes of PDF one client address may upload per UTC day |
 | `LOCAL_RAG_PARSE_WORKERS` | CPU count, at most 8 | parallel PDF parse processes |
-| `LOCAL_RAG_PAGE_TIMEOUT` | `180` | seconds before one page parse is given up |
+| `LOCAL_RAG_PAGE_TIMEOUT` | `300` | seconds before one page parse is given up |
+| `LOCAL_RAG_OCR_TIMEOUT` | `100` | seconds for one 300-dpi Tesseract run before a faster retry (main language pack, 200 dpi) |
 | `LOCAL_RAG_ONNX_THREADS` | `0` (no cap) | ONNX Runtime threads per parse worker (PyMuPDF's table finder); cap it when using many workers |
 | `LOCAL_RAG_CACHE` | `~/.cache/local_agentic_rag/indexes` (`/data/cache` in Docker) | index cache for the Python API |
 | `HF_HOME` | Hugging Face default (`/data/hf` in Docker) | where the embedder and reranker are cached |
