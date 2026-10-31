@@ -13,7 +13,7 @@ names the run behind each claim.
 | PDF ingestion with PyMuPDF: column-aware reading order, running headers and footers removed, headings, error handling for unreadable, encrypted, empty and non-PDF files | unit tests with generated PDFs (two-column order, header stripping, blank/non-PDF/missing files); the 3 benchmark PDFs ingest in 4–37 s |
 | Ruled tables → Markdown with captions; whitespace statistical tables → labelled rows (`label \| 2025 Q2 = 3.8`) | unit tests incl. spanning headers; BEA tables answered correctly by the 7B model on a T4 |
 | Token-aware, heading-aware, page-bound chunking | unit tests (size limits, overlap, sections, no page crossing) |
-| OCR of scanned pages with the Tesseract CLI at 300 dpi; the page's script is detected first and the matching pack used (Urdu/Arabic, Bengali/Assamese, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi, Odia, Chinese, Japanese, Russian; Latin and Devanagari keep eng+hin+mar); garbled text layers and legacy Hindi fonts sent to OCR | scanned Hindi document: word recall 0.99–1.00, both scanned-page questions correct (Colab T4, 25 Oct); 14 scanned copies in 14 scripts: 6/14 after the update, 2/14 before (run 9, slowed by OCR timeouts on Kaggle's shared CPU) |
+| OCR of scanned pages with the Tesseract CLI at 300 dpi; the page's script is detected first and the matching pack used (Urdu/Arabic, Bengali/Assamese, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi, Odia, Chinese, Japanese, Russian; Latin and Devanagari keep eng+hin+mar); garbled text layers and legacy Hindi fonts sent to OCR | scanned Hindi document: word recall 0.99–1.00, both scanned-page questions correct (Colab T4, 25 Oct); 14 scanned copies in 14 scripts: 9/14 correct, 14/14 in the right script, 7–15 s per scanned page (run 11); 4/4 on the held-out scans |
 | Streaming, resumable ingestion (two passes, checkpoint after every batch, bounded memory) | 100- to 10,000-page documents on a T4; output identical to the in-memory parser on every benchmark PDF; resume after interruption at every size (scale runs v1 and 4) |
 | Crash-isolated parse workers (per-page time limits, restart, empty-page fallback) | a killed worker cost exactly one page at every size; hang and crash unit tests |
 | Table detection on the GPU (opt-in, `LOCAL_RAG_ONNX_GPU=1`) | 1,000 table-heavy pages parsed 1.89× faster (224.7 s → 119.0 s) with byte-identical output (run 2); the GPU and CPU paths parsed all 8 test PDFs identically (run 3) |
@@ -29,7 +29,7 @@ names the run behind each claim.
 | Calculator for quantitative questions (fixed operations, operands checked against the cited row and column, safe evaluation) and three numerical fixes (cell alignment, measure-aware retrieval, date candidates) | unit tests incl. 30 grounding tests; numerical questions 2/6 → 5/6 on the English development set (runs 5 and 6) |
 | Citations: `[n]` → passage → page, invalid markers dropped, overlap fallback | 34 citation tests; live answers cite the evidence pages |
 | "Which table" answers name the table (the first cited table's caption is appended when the answer omits it) | 40 tests; Statistical Abstract "which table" questions 5/6 correct (run 3) |
-| Many languages: keyword search for every script, cross-language retrieval, one translated query per document script, the answer written in the question's language (named from the script and word lists) or in the one the user asks for, "not found" in about 30 languages, every script's digits, book names on citations in a multi-book search | `tests/test_languages.py`; 22-language set 81/111 correct, 112/122 in the right script (run 9); sealed held-out set 18/20; Hindi/Marathi set 17/18 (runs 8 and 10) |
+| Many languages: keyword search for every script, cross-language retrieval, one translated query per document script, the answer written in the question's language (named from the script and word lists) or in the one the user asks for, "not found" in about 30 languages, every script's digits, the answer written and checked in the book's language and then translated, an "Answer in" menu, a passage slot for a second matching book, the book of each citation named in the sources | `tests/test_languages.py`; 22-language set 85/111 correct, 117/122 in the right script (run 11); sealed held-out sets 33/44 (run 11) and 18/20 (run 9); Hindi/Marathi set 17/18 (runs 8 and 10) |
 | Answer grading of number words ("Seventeen" = 17) | 93 unit tests incl. negatives |
 | LLM backends: Ollama (default), llama.cpp (CPU), scripted (tests) | Ollama on T4 runs; llama.cpp loads and runs locally |
 
@@ -118,13 +118,14 @@ names the run behind each claim.
    in academic papers, so it is not used. Table detection on two-column papers sometimes merges a table
    with neighbouring equation text (arXiv p.6); the values survive, but the structure is noisy.
 8. **Scanned PDFs** need Tesseract (`apt-get install tesseract-ocr`; the notebook and Docker image install
-   it, with the Indian-language packs and script detection). OCR quality was measured on one Hindi scan;
-   the 14-script scanned set (run 9) was slowed by OCR timeouts on a shared CPU, and the fix that makes the
-   fallback OCR reuse the detected script is not measured on a GPU yet. Quality depends on the scan.
-9. **Languages:** 22 document languages and 24 question languages measured (run 9), a few questions each.
-   Weakest: a question in a different non-English language from the book (10/21) and questions that need
+   it, with the Indian-language packs and script detection). Word recall was measured on one Hindi scan;
+   on 14 scanned copies in 14 scripts, 9 answers were right (run 11). A page whose OCR runs past 100 s is
+   retried once, faster, with the detected script's main pack. Quality depends on the scan.
+9. **Languages:** 22 document languages and 24 question languages measured (run 11), a few questions each.
+   Weakest: a question in a different non-English language from the book (12/21) and questions that need
    two books in different languages (1/6); answers in low-resource languages are bounded by Qwen2.5-7B
-   (one Telugu→Hindi answer translated "feet" as "fingers"). Inside a shared script the language is
+   (one Telugu→Hindi answer translated "feet" as "fingers"). Gemma-3-12B answered 101/111 of the same
+   questions but refused only 6/11 unanswerable ones; switching would need a fresh held-out set. Inside a shared script the language is
    guessed from short word lists, so a very short question gets the generic "answer in the question's
    language" instruction. Arabic mixed with digits, and Urdu set in a Nastaliq font, can come out of a
    PDF's text layer out of order or garbled.

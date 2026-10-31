@@ -839,7 +839,7 @@
     const root = h('div', { className: 'answer-text' });
     const blocks = String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/);
     for (const block of blocks) {
-      const lines = block.split('\n').filter((l) => l.trim());
+      const lines = block.split('\n').filter((l) => l.trim()).map(citesToSentenceEnd);
       if (!lines.length) continue;
       const bullet = /^\s*[-*•]\s+/;
       const numbered = /^\s*\d+[.)]\s+/;
@@ -881,16 +881,32 @@
     return h('button', {
       type: 'button', className: `chip${active ? ' is-active' : ''}`,
       dataset: { msg: m.id, marker: c.marker },
-      attrs: { 'aria-label': `Source ${c.marker}: ${doc ? doc.title + ', ' : ''}page ${c.page}`, title: c.snippet || '' },
+      attrs: { 'aria-label': `Source ${c.marker}: ${doc ? doc.title + ', ' : ''}page ${c.page}`, title: [doc && doc.title, c.snippet].filter(Boolean).join('\n') },
       on: { click: () => openCitation(m.id, c.marker) },
-    }, `[${c.marker}]`, ...(manyDocs(m) && doc ? [h('span', { className: 'chip-doc', text: doc.title })] : []),
-    h('span', { className: 'chip-page', text: `p.${c.page}` }));
+    }, `[${c.marker}]`, h('span', { className: 'chip-page', text: `p.${c.page}` }));
   }
 
-  // Name the book on each citation when the question searched more than one.
-  function manyDocs(m) {
-    const ids = m.docIds && m.docIds.length ? m.docIds : askableDocs().map((d) => d.doc_id);
-    return ids.length > 1;
+  // The footer's source chips, grouped under each book's name when the answer cites more than one
+  // book, so a book is named once instead of on every chip.
+  function sourceChips(m, cites) {
+    const byDoc = new Map();
+    for (const c of cites) byDoc.set(c.doc_id, [...(byDoc.get(c.doc_id) || []), c]);
+    if (byDoc.size < 2) return cites.map((c) => citationChip(m, c));
+    return [...byDoc].map(([docId, group]) => {
+      const doc = state.docs.get(docId);
+      return h('span', { className: 'source-group' },
+        h('span', { className: 'source-book', text: doc ? doc.title : 'Removed document', title: doc ? doc.title : '' }),
+        ...group.map((c) => citationChip(m, c)));
+    });
+  }
+
+  // A citation belongs after the claim it supports. Models (and translations) sometimes open a
+  // sentence with it ("[1] के अनुसार ..."); move such a leading group to the end of its sentence.
+  const SENTENCE_END = '.!?।॥。！？';
+  const LEADING_CITES = new RegExp(`(^|[${SENTENCE_END}]\\s+)((?:\\[\\d+(?:\\s*[,;]\\s*\\d+)*\\][\\s,:;]*)+)([^${SENTENCE_END}]*)([${SENTENCE_END}]?)`, 'gu');
+  function citesToSentenceEnd(line) {
+    return line.replace(LEADING_CITES, (all, lead, cites, body, end) =>
+      (body.trim() ? `${lead}${body.trim()} ${cites.replace(/[\s,:;]+$/, '').trim()}${end}` : all));
   }
 
   function buildAnswer(m) {
@@ -934,7 +950,7 @@
       else foot.append(h('span', { className: 'badge', title: 'The automatic check did not run or gave no result. Open the sources to verify.' }, 'Not checked'));
     }
     const inferred = Array.isArray(a.trace) && a.trace.some((t) => t.step === 'infer_citations');
-    if (cites.length) foot.append(h('span', { text: inferred ? 'Sources (matched by wording)' : 'Sources', title: inferred ? 'The answer did not cite its sources itself; these passages were matched to it afterwards.' : '' }), ...cites.map((c) => citationChip(m, c)));
+    if (cites.length) foot.append(h('span', { text: inferred ? 'Sources (matched by wording)' : 'Sources', title: inferred ? 'The answer did not cite its sources itself; these passages were matched to it afterwards.' : '' }), ...sourceChips(m, cites));
     foot.append(h('span', { className: 'spacer' }));
     if (a.latency_sec) foot.append(h('span', { text: fmtSecs(a.latency_sec), title: a.queue_wait_s > 0.5 ? `including ${fmtSecs(a.queue_wait_s)} waiting in line` : 'Time to answer' }));
     foot.append(copyButton(m));
